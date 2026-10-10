@@ -28,6 +28,9 @@ import {
 } from "lucide-react";
 import { formatSecondsToTime, cn } from "@/lib/utils";
 import { SubtitleSettingsDialog, SubtitleStyles } from "./subtitle-settings-dialog";
+import { attachAvSyncGuard } from "./player-core/av-sync-guard";
+import { collectScopedSubtitles } from "./player-core/subtitle-scope";
+import { adaptSkipTimes } from "@/lib/skip-times-adapter";
 
 export interface SubtitleTrack {
   id?: string;
@@ -56,18 +59,31 @@ export interface VideoSourceData {
     id?: string;
     language?: string;
     label?: string;
-    subtitleUrl: string;
+    subtitleUrl?: string;
+    url?: string;
+    file?: string;
+    direct_url?: string;
     isDefault?: boolean;
+    default?: boolean;
   }>;
+  intro?: { start: number; end: number } | null;
+  outro?: { start: number; end: number } | null;
+  chapters?: Array<{ start: number; end?: number; title: string }>;
+  refDuration?: number;
 }
 
 export function isNativePlayerSource(s: VideoSourceData): boolean {
   if (!s || !s.videoUrl) return false;
   const url = s.videoUrl.toLowerCase();
+  const name = (s.serverName || "").toLowerCase();
+
+  // Server Buzz streams are direct proxied .m3u8 manifests, so they play natively
+  if (name.includes("buzz") || url.includes("server=buzz") || s.id?.includes("buzz")) {
+    return true;
+  }
 
   const isEmbedHost =
     url.includes("anixo.buzz") ||
-    url.includes("megaplay.buzz") ||
     url.includes("vidwish.live") ||
     url.includes("otakuvid") ||
     url.includes("otakuhg") ||
@@ -194,11 +210,36 @@ export function EmbedPlayer({
     };
   });
 
-  // Skip Times
+  // Baseline Skip Times (e.g. from Re:ANIME chapters or AniSkip submission)
+  const [rawSkipTimes, setRawSkipTimes] = useState<{
+    intro: { start: number; end: number } | null;
+    outro: { start: number; end: number } | null;
+    refDuration: number;
+    source?: string;
+  }>({ intro: null, outro: null, refDuration: 1440 });
+
+  // Effective Skip Times dynamically adapted to the currently playing video duration
   const [skipTimes, setSkipTimes] = useState<{
     intro: { start: number; end: number } | null;
     outro: { start: number; end: number } | null;
   }>({ intro: null, outro: null });
+
+  // Dynamically set skip times; only adapt with math if from Flow/Re:ANIME baseline
+  useEffect(() => {
+    if (!rawSkipTimes.intro && !rawSkipTimes.outro) return;
+    const isFlowSource = rawSkipTimes.source?.includes("flow") || rawSkipTimes.source?.includes("reanime");
+    if (isFlowSource && duration > 0) {
+      const adapted = adaptSkipTimes(
+        rawSkipTimes.intro,
+        rawSkipTimes.outro,
+        rawSkipTimes.refDuration,
+        duration
+      );
+      setSkipTimes({ intro: adapted.intro, outro: adapted.outro });
+    } else {
+      setSkipTimes({ intro: rawSkipTimes.intro, outro: rawSkipTimes.outro });
+    }
+  }, [duration, rawSkipTimes]);
 
   // Timeline hover
   const [hoverTime, setHoverTime] = useState<number | null>(null);
@@ -349,16 +390,65 @@ export function EmbedPlayer({
     }
   }, [showSettingsMenu]);
 
-  // Load Skip Times
+  // Load Skip Times (Flow chapters for Flow/Kitty; direct AniSkip for other servers)
   useEffect(() => {
     let cancelled = false;
     async function loadSkipTimes() {
       try {
         const idParam = anilistId ? `anilistId=${anilistId}` : `malId=${malId}`;
-        const res = await fetch(`/api/anime/skip-times?${idParam}&episode=${episodeNumber}`);
+        const titleParam = animeTitle ? `&title=${encodeURIComponent(animeTitle)}` : "";
+        const srvParam = `&server=${encodeURIComponent(server)}`;
+        const isFlowSrv = server.toLowerCase().includes("flow") || server.toLowerCase().includes("kitty");
+
+        // 1. Fetch skip times specifically for current server
+        const res = await fetch(`/api/anime/skip-times?${idParam}&episode=${episodeNumber}${titleParam}${srvParam}`);
         if (res.ok && !cancelled) {
           const data = await res.json();
-          setSkipTimes({ intro: data.intro || null, outro: data.outro || null });
+          if (data.found && (data.intro || data.outro || data.rawIntro || data.rawOutro)) {
+            const rawIn = data.rawIntro || data.intro || null;
+            const rawOut = data.rawOutro || data.outro || null;
+            const refDur = data.refDuration || 1440;
+            const srcType = data.source || (isFlowSrv ? "flow-reanime" : "aniskip");
+            setRawSkipTimes({
+              intro: rawIn,
+              outro: rawOut,
+              refDuration: refDur,
+              source: srcType,
+            });
+            if (isFlowSrv && duration > 0) {
+              const adapted = adaptSkipTimes(rawIn, rawOut, refDur, duration);
+              setSkipTimes({ intro: adapted.intro, outro: adapted.outro });
+            } else {
+              setSkipTimes({ intro: data.intro || rawIn, outro: data.outro || rawOut });
+            }
+            return;
+          }
+        }
+
+        // 2. Direct fallback to flow-skip-times ONLY on Flow/Kitty servers
+        if (isFlowSrv) {
+          const durParam = duration > 0 ? `&duration=${Math.round(duration)}` : "";
+          const flowRes = await fetch(`/api/anime/flow-skip-times?${idParam}&episode=${episodeNumber}${durParam}${titleParam}`);
+          if (flowRes.ok && !cancelled) {
+            const flowData = await flowRes.json();
+            if (flowData.found && (flowData.intro || flowData.outro)) {
+              const rawIn = flowData.rawIntro || flowData.intro || null;
+              const rawOut = flowData.rawOutro || flowData.outro || null;
+              const refDur = flowData.refDuration || 1440;
+              setRawSkipTimes({
+                intro: rawIn,
+                outro: rawOut,
+                refDuration: refDur,
+                source: "flow-reanime",
+              });
+              if (duration > 0) {
+                const adapted = adaptSkipTimes(rawIn, rawOut, refDur, duration);
+                setSkipTimes({ intro: adapted.intro, outro: adapted.outro });
+              } else {
+                setSkipTimes({ intro: flowData.intro || rawIn, outro: flowData.outro || rawOut });
+              }
+            }
+          }
         }
       } catch {}
     }
@@ -366,7 +456,7 @@ export function EmbedPlayer({
     return () => {
       cancelled = true;
     };
-  }, [anilistId, malId, episodeNumber]);
+  }, [anilistId, malId, episodeNumber, animeTitle, server]);
 
   // Fetch Stream from /api/play
   useEffect(() => {
@@ -397,24 +487,14 @@ export function EmbedPlayer({
           ? data.allServers
           : [];
 
-        // Build guaranteed standard 9-provider roster for Sub & Dub
+        // Build standard 5-provider roster for Sub only (never synthesize fake DUB)
         const idParams = `${anilistId ? `anilistId=${anilistId}&` : ""}${malId ? `malId=${malId}&` : ""}episode=${episodeNumber}`;
         const standardFallbackProviders: VideoSourceData[] = [
-          { id: "flow-1-sub", type: "SUB", language: "Japanese", videoUrl: `/api/play?${idParams}&audio=sub&server=flow1&format=m3u8`, quality: "1080p", isHls: true, serverName: "Flow 1 (Sub)" },
-          { id: "flow-1-dub", type: "DUB", language: "English", videoUrl: `/api/play?${idParams}&audio=dub&server=flow1&format=m3u8`, quality: "1080p", isHls: true, serverName: "Flow 1 (English Dub)" },
-          { id: "flow-2-sub", type: "SUB", language: "Japanese", videoUrl: `/api/play?${idParams}&audio=sub&server=flow2&format=m3u8`, quality: "1080p", isHls: true, serverName: "Flow 2 (Sub)" },
-          { id: "flow-2-dub", type: "DUB", language: "English", videoUrl: `/api/play?${idParams}&audio=dub&server=flow2&format=m3u8`, quality: "1080p", isHls: true, serverName: "Flow 2 (English Dub)" },
+          { id: "flow-sub", type: "SUB", language: "Japanese", videoUrl: `/api/play?${idParams}&audio=sub&server=flow&format=m3u8`, quality: "1080p", isHls: true, serverName: "Flow (Sub)" },
+          { id: "kitty-sub", type: "SUB", language: "Japanese", videoUrl: `/api/play?${idParams}&audio=sub&server=kitty&format=m3u8`, quality: "1080p", isHls: true, serverName: "Kitty (Sub)" },
           { id: "animex-yuri-sub", type: "SUB", language: "Japanese", videoUrl: `/api/play?${idParams}&audio=sub&server=yuri&format=m3u8`, quality: "1080p", isHls: true, serverName: "Yuri (Sub)" },
-          { id: "animex-yuri-dub", type: "DUB", language: "English", videoUrl: `/api/play?${idParams}&audio=dub&server=yuri&format=m3u8`, quality: "1080p", isHls: true, serverName: "Yuri (English Dub)" },
           { id: "animex-zuri-sub", type: "SUB", language: "Japanese", videoUrl: `/api/play?${idParams}&audio=sub&server=zuri&format=m3u8`, quality: "1080p", isHls: true, serverName: "Zuri (Sub)" },
-          { id: "animeparadise-sub", type: "SUB", language: "Japanese", videoUrl: `/api/play?${idParams}&audio=sub&server=paradise&format=m3u8`, quality: "1080p", isHls: true, serverName: "AnimeParadise (Sub)" },
-          { id: "extract-kaido-sub", type: "SUB", language: "Japanese", videoUrl: `/api/play?${idParams}&audio=sub&server=kaido&format=m3u8`, quality: "1080p", isHls: true, serverName: "Kaido (Sub)" },
-          { id: "extract-kaido-dub", type: "DUB", language: "English", videoUrl: `/api/play?${idParams}&audio=dub&server=kaido&format=m3u8`, quality: "1080p", isHls: true, serverName: "Kaido (English Dub)" },
-          { id: "extract-kaa-sub", type: "SUB", language: "Japanese", videoUrl: `/api/play?${idParams}&audio=sub&server=kaa&format=m3u8`, quality: "1080p", isHls: true, serverName: "Kaa (Sub)" },
-          { id: "consumet-hianime-sub", type: "SUB", language: "Japanese", videoUrl: `/api/play?${idParams}&audio=sub&server=hianime&format=m3u8`, quality: "1080p", isHls: true, serverName: "HiAnime (Sub)" },
-          { id: "consumet-hianime-dub", type: "DUB", language: "English", videoUrl: `/api/play?${idParams}&audio=dub&server=hianime&format=m3u8`, quality: "1080p", isHls: true, serverName: "HiAnime (English Dub)" },
-          { id: "consumet-gogoanime-sub", type: "SUB", language: "Japanese", videoUrl: `/api/play?${idParams}&audio=sub&server=gogo&format=m3u8`, quality: "1080p", isHls: true, serverName: "Gogoanime (Sub)" },
-          { id: "consumet-gogoanime-dub", type: "DUB", language: "English", videoUrl: `/api/play?${idParams}&audio=dub&server=gogo&format=m3u8`, quality: "1080p", isHls: true, serverName: "Gogoanime (English Dub)" },
+          { id: "buzz-sub", type: "SUB", language: "Japanese", videoUrl: `/api/play?${idParams}&audio=sub&server=buzz&format=m3u8`, quality: "1080p", isHls: true, serverName: "Buzz (Sub)" },
         ];
 
         // Clean & ensure proxying on external URLs
@@ -435,35 +515,32 @@ export function EmbedPlayer({
         }
         setSources(allAvailableSources);
 
+        // Detect if Dub is genuinely available on this anime
+        const hasAuthenticDub = cleanedIncoming.some((s) => s.type === "DUB" && !(s as any).audio_fallback);
+        if (selectedType === "dub" && (!hasAuthenticDub || data.hasDub === false || data.audio_fallback)) {
+          setSelectedType("sub");
+          showToast("info", "No English Dub available for this episode. Switched to Sub.");
+        }
+
         if (!initialStream && allAvailableSources.length === 0) {
           throw new Error(data.error || "No playable stream returned from server.");
         }
 
-        const isDub = selectedType === "dub";
+        const isDub = selectedType === "dub" && hasAuthenticDub && data.hasDub !== false && !data.audio_fallback;
         const typeMatch = (s: VideoSourceData) => (isDub ? s.type === "DUB" : s.type === "SUB");
         const sNorm = server.toLowerCase().replace(/[\s_]/g, "-");
         let selectedSource: VideoSourceData | undefined;
 
-        if (sNorm.includes("flow-2") || sNorm === "flow2") {
-          selectedSource = allAvailableSources.find((s) => (s.id?.includes("flow-2") || s.id?.includes("flow2")) && typeMatch(s));
-        } else if (sNorm.includes("paradise")) {
-          selectedSource = allAvailableSources.find((s) => (s.id?.includes("paradise") || s.serverName?.toLowerCase().includes("paradise")) && typeMatch(s));
-        } else if (sNorm.includes("kaido")) {
-          selectedSource = allAvailableSources.find((s) => (s.id?.includes("kaido") || s.serverName?.toLowerCase().includes("kaido")) && typeMatch(s));
-        } else if (sNorm.includes("kaa")) {
-          selectedSource = allAvailableSources.find((s) => (s.id?.includes("kaa") || s.serverName?.toLowerCase().includes("kaa")) && typeMatch(s));
-        } else if (sNorm.includes("hianime")) {
-          selectedSource = allAvailableSources.find((s) => (s.id?.includes("hianime") || s.serverName?.toLowerCase().includes("hianime")) && typeMatch(s));
-        } else if (sNorm.includes("gogo")) {
-          selectedSource = allAvailableSources.find((s) => (s.id?.includes("gogo") || s.serverName?.toLowerCase().includes("gogo")) && typeMatch(s));
-        } else if (sNorm.includes("yuri") || sNorm.includes("yuki")) {
-          selectedSource = allAvailableSources.find((s) => (s.id?.includes("yuri") || s.id?.includes("yuki")) && typeMatch(s));
+        if (sNorm.includes("buzz") || sNorm.includes("megaplay")) {
+          selectedSource = allAvailableSources.find((s) => (s.id?.includes("buzz") || s.serverName?.toLowerCase().includes("buzz") || s.id?.includes("megaplay") || s.serverName?.toLowerCase().includes("megaplay")) && typeMatch(s));
         } else if (sNorm.includes("zuri") || sNorm.includes("zuna")) {
-          selectedSource = allAvailableSources.find((s) => (s.id?.includes("zuri") || s.id?.includes("zuna")) && typeMatch(s));
-        } else if (sNorm.includes("animex")) {
-          selectedSource = allAvailableSources.find((s) => s.id?.includes("animex") && typeMatch(s));
+          selectedSource = allAvailableSources.find((s) => (s.id?.includes("zuri") || s.id?.includes("zuna") || s.serverName?.toLowerCase().includes("zuri")) && typeMatch(s));
+        } else if (sNorm.includes("yuri") || sNorm.includes("yuki")) {
+          selectedSource = allAvailableSources.find((s) => (s.id?.includes("yuri") || s.id?.includes("yuki") || s.serverName?.toLowerCase().includes("yuri")) && typeMatch(s));
+        } else if (sNorm.includes("kitty") || sNorm.includes("flow-2") || sNorm.includes("hd-2")) {
+          selectedSource = allAvailableSources.find((s) => (s.id?.includes("kitty") || s.serverName?.toLowerCase().includes("kitty") || s.id?.includes("flow-2") || s.serverName?.toLowerCase().includes("hd-2")) && typeMatch(s));
         } else if (sNorm.includes("flow") || sNorm.includes("reanime")) {
-          selectedSource = allAvailableSources.find((s) => (s.id?.includes("flow-1") || s.id?.includes("flow1") || s.id?.includes("reanime")) && typeMatch(s));
+          selectedSource = allAvailableSources.find((s) => (s.id?.includes("flow") || s.serverName?.toLowerCase().includes("flow") || s.id?.includes("reanime") || s.serverName?.toLowerCase().includes("hd-1")) && !s.id?.includes("kitty") && !s.serverName?.toLowerCase().includes("kitty") && typeMatch(s));
         }
 
         if (!selectedSource && initialStream) {
@@ -480,41 +557,62 @@ export function EmbedPlayer({
           setStreamUrl(initialStream);
         }
 
-        if (Array.isArray(data.chapters) && data.chapters.length > 0) {
-          const introChap = data.chapters.find((c: any) => c.title?.toLowerCase().includes("intro") || c.title?.toLowerCase().includes("op"));
-          const outroChap = data.chapters.find((c: any) => c.title?.toLowerCase().includes("outro") || c.title?.toLowerCase().includes("ed"));
-          if (introChap || outroChap) {
-            setSkipTimes((prev) => ({
-              intro: prev.intro || (introChap ? { start: introChap.start, end: introChap.end } : null),
-              outro: prev.outro || (outroChap ? { start: outroChap.start, end: outroChap.end } : null),
-            }));
+        // Extract Re:ANIME chapters or explicit intro/outro from /api/play
+        let apiIntro: { start: number; end: number } | null = data.intro || null;
+        let apiOutro: { start: number; end: number } | null = data.outro || null;
+        if (!apiIntro && !apiOutro && Array.isArray(data.chapters) && data.chapters.length > 0) {
+          const introChap = data.chapters.find((c: any) => c.title?.toLowerCase().includes("intro") || c.title?.toLowerCase().includes("op") || c.title?.toLowerCase().includes("opening"));
+          const outroChap = data.chapters.find((c: any) => c.title?.toLowerCase().includes("outro") || c.title?.toLowerCase().includes("ed") || c.title?.toLowerCase().includes("ending"));
+          if (introChap) apiIntro = { start: introChap.start, end: introChap.end };
+          if (outroChap) apiOutro = { start: outroChap.start, end: outroChap.end };
+        }
+
+        const isFlowData = data.server?.toLowerCase().includes("flow") || data.server?.toLowerCase().includes("kitty") || data.server?.toLowerCase().includes("hd");
+        if (apiIntro || apiOutro) {
+          const refDur = data.refDuration || 1440;
+          setRawSkipTimes({
+            intro: apiIntro,
+            outro: apiOutro,
+            refDuration: refDur,
+            source: isFlowData ? "flow-reanime" : "aniskip",
+          });
+          if (isFlowData && duration > 0) {
+            const adapted = adaptSkipTimes(apiIntro, apiOutro, refDur, duration);
+            setSkipTimes({ intro: adapted.intro, outro: adapted.outro });
+          } else {
+            setSkipTimes({ intro: apiIntro, outro: apiOutro });
           }
         }
 
         if (data.title) setAnimeTitle(data.title);
 
-        // Subtitles resolution
-        const rawSubs = (selectedSource?.subtitles && selectedSource.subtitles.length > 0)
-          ? selectedSource.subtitles.map((s, idx) => ({
-              id: s.id || `sub-${idx}`,
-              language: s.language || "en",
-              label: s.label || "English",
-              url: s.subtitleUrl,
-              default: s.isDefault ?? idx === 0,
-            }))
-          : Array.isArray(data.subtitles)
-          ? data.subtitles
-          : [];
+        // Subtitles resolution using scoped subtitle collectors
+        const scopedSubs = collectScopedSubtitles({
+          currentSource: selectedSource,
+          allSources: allAvailableSources,
+          dynamicSubtitles: data.subtitles,
+        });
 
-        if (rawSubs.length > 0) {
-          setAllAvailableSubtitles(rawSubs);
+        const mappedSubs: SubtitleTrack[] = scopedSubs.map((s) => ({
+          id: s.id,
+          language: s.language,
+          label: s.label,
+          url: s.subtitleUrl,
+          default: s.isDefault,
+        }));
+
+        if (mappedSubs.length > 0) {
+          setAllAvailableSubtitles(mappedSubs);
           const defaultSub =
-            rawSubs.find((s: SubtitleTrack) => s.default) ||
-            rawSubs.find((s: SubtitleTrack) => s.language?.toLowerCase().startsWith("en")) ||
-            rawSubs[0];
+            mappedSubs.find((s) => s.default) ||
+            mappedSubs.find((s) => s.language?.toLowerCase().startsWith("en") || s.label?.toLowerCase().includes("english")) ||
+            mappedSubs[0];
           if (defaultSub) {
             setActiveSubtitleTrack(defaultSub.id || defaultSub.url);
           }
+        } else {
+          setAllAvailableSubtitles([]);
+          setActiveSubtitleTrack("");
         }
 
         postToParent("PLAYER_EVENT", {
@@ -561,20 +659,24 @@ export function EmbedPlayer({
     if (Hls.isSupported()) {
       const hls = new Hls({
         enableWorker: true,
-        lowLatencyMode: false, // CRITICAL: false for VOD, true drops video frames causing black screen!
-        backBufferLength: 30,
-        maxBufferLength: 60,
-        maxMaxBufferLength: 120,
-        maxBufferSize: 60 * 1000 * 1000,
-        nudgeMaxRetry: 5,
-        nudgeOffset: 0.2,
-        manifestLoadingTimeOut: 20000,
-        manifestLoadingMaxRetry: 3,
-        levelLoadingTimeOut: 20000,
-        levelLoadingMaxRetry: 3,
-        fragLoadingTimeOut: 20000,
-        fragLoadingMaxRetry: 4,
+        lowLatencyMode: false,
+        backBufferLength: 60,
+        maxBufferLength: 180,
+        maxMaxBufferLength: 600,
+        maxBufferSize: 150 * 1000 * 1000,
+        highBufferWatchdogPeriod: 2,
+        maxBufferHole: 0.5,
+        nudgeMaxRetry: 10,
+        nudgeOffset: 0.15,
+        manifestLoadingTimeOut: 30000,
+        manifestLoadingMaxRetry: 6,
+        levelLoadingTimeOut: 30000,
+        levelLoadingMaxRetry: 6,
+        fragLoadingTimeOut: 30000,
+        fragLoadingMaxRetry: 8,
       });
+
+      const detachAvSync = attachAvSyncGuard(hls, video);
 
       hls.loadSource(streamUrl);
       hls.attachMedia(video);
@@ -597,6 +699,10 @@ export function EmbedPlayer({
         video.play().catch(() => {
           setIsPlaying(false);
         });
+      });
+
+      hls.on(Hls.Events.BUFFER_APPENDED, () => {
+        setIsLoading(false);
       });
 
       hls.on(Hls.Events.FRAG_LOADED, () => {
@@ -664,11 +770,18 @@ export function EmbedPlayer({
               break;
           }
         } else {
-          // Handle non-fatal buffer stalls to prevent black video freezes
+          // Handle non-fatal buffer stalls to prevent video freezes
           if (data.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR) {
+            try {
+              hls.startLoad();
+            } catch {}
             if (video && !video.paused && video.readyState >= 2) {
               video.currentTime += 0.1;
             }
+          } else if (data.details === Hls.ErrorDetails.BUFFER_SEEK_OVER_HOLE) {
+            try {
+              hls.startLoad();
+            } catch {}
           }
         }
       });
@@ -697,17 +810,18 @@ export function EmbedPlayer({
 
   // Subtitle cues fetching & parsing (.vtt / .ass / .srt)
   useEffect(() => {
-    if (activeSubtitleTrack === null) {
+    if (activeSubtitleTrack === null || activeSubtitleTrack === "") {
       setCues([]);
       setCurrentSubtitleText("");
       return;
     }
 
     const currentSub =
-      allAvailableSubtitles.find((s) => s.id === activeSubtitleTrack || s.url === activeSubtitleTrack) ||
+      allAvailableSubtitles.find((s) => s.id === activeSubtitleTrack || s.url === activeSubtitleTrack || (s as any).subtitleUrl === activeSubtitleTrack) ||
       allAvailableSubtitles[0];
 
-    if (!currentSub || !currentSub.url) {
+    const subUrl = currentSub?.url || (currentSub as any)?.subtitleUrl || (currentSub as any)?.direct_url || (currentSub as any)?.file;
+    if (!currentSub || !subUrl) {
       setCues([]);
       setCurrentSubtitleText("");
       return;
@@ -726,9 +840,9 @@ export function EmbedPlayer({
     };
 
     let isMounted = true;
-    const fetchUrl = currentSub.url.startsWith("/api/proxy")
-      ? currentSub.url
-      : `/api/proxy/subtitles?url=${encodeURIComponent(currentSub.url)}`;
+    const fetchUrl = subUrl.startsWith("/api/proxy")
+      ? subUrl
+      : `/api/proxy/subtitles?url=${encodeURIComponent(subUrl)}`;
 
     fetch(fetchUrl)
       .then((res) => (res.ok ? res.text() : ""))
@@ -1367,6 +1481,13 @@ export function EmbedPlayer({
     return () => ro.disconnect();
   }, [settingsSubMenu, showSettingsMenu]);
 
+  // Reset settings submenu to 'main' whenever settings menu is closed
+  useEffect(() => {
+    if (!showSettingsMenu) {
+      setSettingsSubMenu("main");
+    }
+  }, [showSettingsMenu]);
+
   // Close settings on outside click
   useEffect(() => {
     if (!showSettingsMenu) return;
@@ -1464,6 +1585,18 @@ export function EmbedPlayer({
     const sName = (src.serverName || "").toLowerCase();
     const sUrl = (src.videoUrl || "").toLowerCase();
 
+    // 0. Buzz from Megaplay
+    if (
+      sId.includes("buzz") ||
+      sName.includes("buzz") ||
+      sUrl.includes("server=buzz") ||
+      sId.includes("megaplay") ||
+      sName.includes("megaplay") ||
+      sUrl.includes("megaplay")
+    ) {
+      return "Buzz";
+    }
+
     // 1. Zuri from Extractor
     if (
       sId.includes("zuri") ||
@@ -1488,124 +1621,25 @@ export function EmbedPlayer({
       return "Yuri";
     }
 
-    // 3. AnimeParadise from Consumet
+    // 3. Kitty (Flow 2 / HD-2)
     if (
-      sId.includes("animeparadise") ||
-      sName.includes("animeparadise") ||
-      sUrl.includes("animeparadise")
-    ) {
-      return "AnimeParadise";
-    }
-
-    // 4. Kaido from Extractor
-    if (
-      sId.includes("kaido") ||
-      sName.includes("kaido") ||
-      sUrl.includes("kaido")
-    ) {
-      return "Kaido";
-    }
-
-    // 5. Kaa from Extractor
-    if (
-      sId.includes("kaa") ||
-      sName.includes("kaa") ||
-      sUrl.includes("kaa")
-    ) {
-      return "Kaa";
-    }
-
-    // 6. HiAnime from Consumet
-    if (
-      sId.includes("hianime") ||
-      sName.includes("hianime") ||
-      sUrl.includes("hianime")
-    ) {
-      return "HiAnime";
-    }
-
-    // 7. Gogoanime from Consumet
-    if (
-      sId.includes("gogo") ||
-      sName.includes("gogo") ||
-      sUrl.includes("gogo")
-    ) {
-      return "Gogoanime";
-    }
-
-    // 8. Flow 2 from Re:ANIME
-    if (
+      sId.includes("kitty") ||
+      sName.includes("kitty") ||
+      sUrl.includes("server=kitty") ||
       sId.includes("flow-2") ||
-      sId.includes("flow2") ||
       sName.includes("flow 2") ||
-      sName.includes("flow-2") ||
       sName.includes("hd-2") ||
-      sName.includes("hd 2") ||
-      sUrl.includes("server=hd-2") ||
-      sUrl.includes("server=hd2") ||
-      sUrl.includes("fetch8")
+      sUrl.includes("server=hd-2")
     ) {
-      return "Flow 2";
+      return "Kitty";
     }
 
-    // 9. Flow 1 from Re:ANIME
-    if (
-      sId.includes("flow-1") ||
-      sId.includes("flow1") ||
-      sName.includes("flow 1") ||
-      sName.includes("flow-1") ||
-      sName.includes("hd-1") ||
-      sName.includes("hd 1") ||
-      sId.startsWith("reanime-") ||
-      sId.startsWith("coolapi-") ||
-      sName.includes("reanime") ||
-      sName.includes("coolapi") ||
-      sName.includes("aniflow") ||
-      sName.includes("flow") ||
-      sUrl.includes("server=hd-1") ||
-      sUrl.includes("server=hd1")
-    ) {
-      return "Flow 1";
-    }
-
-    // Fallback: check query params on URL
-    try {
-      const base = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
-      const parsed = new URL(src.videoUrl, base);
-      const prov = parsed.searchParams.get("provider") || parsed.searchParams.get("providerId") || "";
-      if (prov) {
-        const pNorm = prov.toLowerCase();
-        if (pNorm.includes("zuri") || pNorm.includes("zuna")) return "Zuri";
-        if (pNorm.includes("yuri") || pNorm.includes("yuki")) return "Yuri";
-        return prov.charAt(0).toUpperCase() + prov.slice(1).toLowerCase();
-      }
-    } catch {}
-
-    if (src.serverName) {
-      let cleaned = src.serverName
-        .replace(/^Consumet\s*[-–:]\s*/i, "")
-        .replace(/\(HLS auto\)/i, "")
-        .replace(/\(HLS\s*([^)]+)\)/i, "($1)")
-        .replace(/\s*\((sub|dub|english dub)[^)]*\)/i, "")
-        .trim();
-      if (cleaned) return cleaned;
-    }
-
-    return "Flow 1";
+    // 4. Flow (default for all Re:ANIME / HD-1 / Flow streams)
+    return "Flow";
   }, []);
 
   const sortSourcesByProvider = useCallback((a: VideoSourceData, b: VideoSourceData) => {
-    const SERVER_SORT_ORDER = [
-      "flow 1",
-      "flow 2",
-      "animeparadise",
-      "kaido",
-      "kaa",
-      "hianime",
-      "gogoanime",
-      "yuri",
-      "zuri",
-    ];
+    const SERVER_SORT_ORDER = ["flow", "kitty", "yuri", "zuri", "buzz"];
     const provA = getSourceProvider(a).toLowerCase();
     const provB = getSourceProvider(b).toLowerCase();
     const idxA = SERVER_SORT_ORDER.indexOf(provA);
@@ -1632,14 +1666,14 @@ export function EmbedPlayer({
   }, [sources, getSourceProvider, sortSourcesByProvider]);
 
   const nativeDubSources = useMemo<VideoSourceData[]>(() => {
-    // Zuri (zuna from extractor) is strictly SUB ONLY - never present in Dub
-    const isNotZuri = (s: VideoSourceData) => {
-      const id = (s.id || "").toLowerCase();
-      const name = (s.serverName || "").toLowerCase();
-      return !id.includes("zuri") && !id.includes("zuna") && !name.includes("zuri") && !name.includes("zuna");
+    // Strictly NO Zuri (Zuri is Japanese SUB ONLY) and filter out upstream audio fallbacks
+    const isAuthenticDub = (s: VideoSourceData) => {
+      if ((s as any).audio_fallback) return false;
+      const prov = getSourceProvider(s).toLowerCase();
+      return prov !== "zuri";
     };
-    const raw = sources.filter((s) => s.type === "DUB" && isNativePlayerSource(s) && isNotZuri(s));
-    const list = raw.length > 0 ? raw : (sources.some(isNativePlayerSource) ? [] : sources.filter((s) => s.type === "DUB" && isNotZuri(s)));
+    const raw = sources.filter((s) => s.type === "DUB" && isNativePlayerSource(s) && isAuthenticDub(s));
+    const list = raw.length > 0 ? raw : (sources.some(isNativePlayerSource) ? [] : sources.filter((s) => s.type === "DUB" && isAuthenticDub(s)));
     const byProv = new Map<string, VideoSourceData>();
     for (const s of list) {
       const prov = getSourceProvider(s).toLowerCase();
@@ -1699,36 +1733,130 @@ export function EmbedPlayer({
     }
 
     const prov = getSourceProvider(src).toLowerCase();
-    let srvCode = "flow1";
-    if (prov.includes("flow 2") || prov.includes("flow-2")) srvCode = "flow2";
-    else if (prov.includes("paradise")) srvCode = "paradise";
-    else if (prov.includes("kaido")) srvCode = "kaido";
-    else if (prov.includes("kaa")) srvCode = "kaa";
-    else if (prov.includes("hianime")) srvCode = "hianime";
-    else if (prov.includes("gogo")) srvCode = "gogo";
-    else if (prov.includes("yuri") || prov.includes("yuki")) srvCode = "yuri";
+    let srvCode = "flow";
+    if (prov.includes("buzz") || prov.includes("megaplay")) srvCode = "buzz";
     else if (prov.includes("zuri") || prov.includes("zuna")) srvCode = "zuri";
+    else if (prov.includes("yuri") || prov.includes("yuki")) srvCode = "yuri";
+    else if (prov.includes("kitty") || prov.includes("flow-2") || prov.includes("hd-2")) srvCode = "kitty";
     setServer(srvCode);
+
+    // Apply skip times specifically for the newly selected server
+    const isFlowSrc = srvCode === "flow" || srvCode === "kitty";
+    if (src.intro || src.outro) {
+      setRawSkipTimes({
+        intro: src.intro || null,
+        outro: src.outro || null,
+        refDuration: src.refDuration || 1440,
+        source: isFlowSrc ? "flow-reanime" : "aniskip",
+      });
+      if (isFlowSrc && duration > 0) {
+        const adapted = adaptSkipTimes(src.intro || null, src.outro || null, src.refDuration || 1440, duration);
+        setSkipTimes({ intro: adapted.intro, outro: adapted.outro });
+      } else {
+        setSkipTimes({ intro: src.intro || null, outro: src.outro || null });
+      }
+    } else {
+      // Reload server-scoped skip times without inheriting Flow timestamps
+      const idParam = anilistId ? `anilistId=${anilistId}` : `malId=${malId}`;
+      const titleParam = animeTitle ? `&title=${encodeURIComponent(animeTitle)}` : "";
+      fetch(`/api/anime/skip-times?${idParam}&episode=${episodeNumber}${titleParam}&server=${srvCode}`)
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.found && (d.intro || d.outro)) {
+            setRawSkipTimes({
+              intro: d.intro || null,
+              outro: d.outro || null,
+              refDuration: d.refDuration || 1440,
+              source: d.source || (isFlowSrc ? "flow-reanime" : "aniskip"),
+            });
+            if (isFlowSrc && duration > 0) {
+              const adapted = adaptSkipTimes(d.intro || null, d.outro || null, d.refDuration || 1440, duration);
+              setSkipTimes({ intro: adapted.intro, outro: adapted.outro });
+            } else {
+              setSkipTimes({ intro: d.intro || null, outro: d.outro || null });
+            }
+          } else {
+            setRawSkipTimes({ intro: null, outro: null, refDuration: 1440, source: isFlowSrc ? "flow-reanime" : "aniskip" });
+            setSkipTimes({ intro: null, outro: null });
+          }
+        })
+        .catch(() => {});
+    }
 
     setActiveSourceId(src.id);
     setStreamUrl(src.videoUrl);
 
-    if (src.subtitles && src.subtitles.length > 0) {
-      const formattedSubs: SubtitleTrack[] = src.subtitles.map((s, idx) => ({
-        id: s.id || `sub-${idx}`,
-        language: s.language || "en",
-        label: s.label || "English",
-        url: s.subtitleUrl,
-        default: s.isDefault ?? idx === 0,
-      }));
-      setAllAvailableSubtitles(formattedSubs);
-      const defaultSub = formattedSubs.find((s) => s.default) || formattedSubs[0];
-      if (defaultSub) {
-        setActiveSubtitleTrack(defaultSub.id || defaultSub.url);
+    const rawSubsList = (src.subtitles && src.subtitles.length > 0)
+      ? src.subtitles
+      : sources.find((s) => getSourceProvider(s).toLowerCase() === prov && Array.isArray(s.subtitles) && s.subtitles.length > 0)?.subtitles;
+
+    if (rawSubsList && rawSubsList.length > 0) {
+      const formattedSubs: SubtitleTrack[] = rawSubsList.map((s: any, idx: number) => {
+        const rawUrl = s.url || s.subtitleUrl || s.file || s.direct_url || s.link || "";
+        const proxySubUrl = rawUrl
+          ? (rawUrl.startsWith("/api/proxy") ? rawUrl : `/api/proxy/subtitles?url=${encodeURIComponent(rawUrl)}`)
+          : "";
+        return {
+          id: s.id || `sub-${idx}`,
+          language: s.language || s.lang || "en",
+          label: s.label || s.language || `Subtitle ${idx + 1}`,
+          url: proxySubUrl || rawUrl,
+          default: s.default ?? s.isDefault ?? (idx === 0),
+        };
+      }).filter((s) => Boolean(s.url));
+
+      if (formattedSubs.length > 0) {
+        setAllAvailableSubtitles(formattedSubs);
+        const defaultSub = formattedSubs.find((s) => s.default) || formattedSubs[0];
+        if (defaultSub) {
+          setActiveSubtitleTrack(defaultSub.id || defaultSub.url);
+        }
       }
     }
 
+    // Always fetch fresh subtitles asynchronously for the chosen server in case they weren't attached yet
+    const subIdParam = anilistId ? `anilistId=${anilistId}` : `malId=${malId}`;
+    const subEpParam = `episode=${episodeNumber}`;
+    fetch(`/api/play?${subIdParam}&${subEpParam}&audio=${newType}&server=${srvCode}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.subtitles && Array.isArray(data.subtitles) && data.subtitles.length > 0) {
+          const fetchedSubs: SubtitleTrack[] = data.subtitles
+            .map((s: any, idx: number) => {
+              const rawUrl = s.url || s.subtitleUrl || s.file || s.direct_url || s.link || "";
+              const proxySubUrl = rawUrl
+                ? (rawUrl.startsWith("/api/proxy") ? rawUrl : `/api/proxy/subtitles?url=${encodeURIComponent(rawUrl)}`)
+                : "";
+              return {
+                id: s.id || `sub-${idx}`,
+                language: s.language || s.lang || "en",
+                label: s.label || s.language || `Subtitle ${idx + 1}`,
+                url: proxySubUrl || rawUrl,
+                default: s.default ?? s.isDefault ?? (idx === 0),
+              };
+            })
+            .filter((s: SubtitleTrack) => Boolean(s.url));
+
+          if (fetchedSubs.length > 0) {
+            setAllAvailableSubtitles(fetchedSubs);
+            setActiveSubtitleTrack((prevTrack) => {
+              const match = fetchedSubs.find((sub) => sub.id === prevTrack || sub.url === prevTrack);
+              if (match) return match.id || match.url;
+              const def = fetchedSubs.find((sub) => sub.default) || fetchedSubs[0];
+              return def ? (def.id || def.url) : null;
+            });
+            setSources((prev) =>
+              prev.map((item) =>
+                item.id === src.id ? { ...item, subtitles: fetchedSubs } : item
+              )
+            );
+          }
+        }
+      })
+      .catch(() => {});
+
     setShowSettingsMenu(false);
+    setSettingsSubMenu("main");
     showToast("success", `Switched to ${formatServerRouteName(src)} (${src.type === "DUB" ? "Dub" : "Sub"})`);
 
     postToParent("PLAYER_EVENT", {
@@ -1738,7 +1866,7 @@ export function EmbedPlayer({
       audio: newType,
       videoUrl: src.videoUrl,
     });
-  }, [currentTime, selectedType, getSourceProvider, formatServerRouteName, showToast, postToParent]);
+  }, [currentTime, selectedType, getSourceProvider, formatServerRouteName, showToast, postToParent, duration, rawSkipTimes]);
 
   const handleFallbackToNextServer = useCallback(() => {
     const isDub = selectedType === "dub";
@@ -2606,7 +2734,13 @@ export function EmbedPlayer({
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                setShowSettingsMenu((prev) => !prev);
+                setShowSettingsMenu((prev) => {
+                  const next = !prev;
+                  if (next) {
+                    setSettingsSubMenu("main");
+                  }
+                  return next;
+                });
               }}
               className="w-8 h-8 sm:w-8.5 sm:h-8.5 rounded-full inline-flex items-center justify-center active:scale-95 transition-all cursor-pointer touch-manipulation group/btn shrink-0"
               title="Settings"

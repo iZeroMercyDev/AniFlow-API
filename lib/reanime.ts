@@ -185,6 +185,82 @@ export interface DecryptedStreamResult {
   thumbnails_vtt?: string | null;
   title?: string | null;
   audio_type?: string | null;
+  intro?: { start: number; end: number } | null;
+  outro?: { start: number; end: number } | null;
+  chapters?: Array<{ start: number; end?: number; title: string }>;
+}
+
+export function parseFlixChapters(pageData: any): {
+  intro: { start: number; end: number } | null;
+  outro: { start: number; end: number } | null;
+  chapters: Array<{ start: number; end?: number; title: string }>;
+  refDuration: number;
+} {
+  let intro: { start: number; end: number } | null = null;
+  let outro: { start: number; end: number } | null = null;
+
+  if (
+    pageData?.intro_chapter &&
+    typeof pageData.intro_chapter.start === "number" &&
+    typeof pageData.intro_chapter.end === "number" &&
+    pageData.intro_chapter.end > pageData.intro_chapter.start
+  ) {
+    intro = {
+      start: pageData.intro_chapter.start,
+      end: pageData.intro_chapter.end,
+    };
+  }
+
+  if (
+    pageData?.outro_chapter &&
+    typeof pageData.outro_chapter.start === "number" &&
+    typeof pageData.outro_chapter.end === "number" &&
+    pageData.outro_chapter.end > pageData.outro_chapter.start
+  ) {
+    outro = {
+      start: pageData.outro_chapter.start,
+      end: pageData.outro_chapter.end,
+    };
+  }
+
+  const rawChapters = Array.isArray(pageData?.chapters) ? pageData.chapters : [];
+  const chapters = rawChapters.map((c: any) => ({
+    start: Number(c.start) || 0,
+    end: typeof c.end === "number" ? c.end : undefined,
+    title: String(c.title || ""),
+  }));
+
+  if (!intro && chapters.length > 0) {
+    const ch = chapters.find((c: any) =>
+      /intro|opening|\bop\b/i.test(c.title || "")
+    );
+    if (ch && typeof ch.start === "number" && typeof ch.end === "number" && ch.end > ch.start) {
+      intro = { start: ch.start, end: ch.end };
+    }
+  }
+
+  if (!outro && chapters.length > 0) {
+    const ch = chapters.find((c: any) =>
+      /outro|ending|\bed\b|credits/i.test(c.title || "")
+    );
+    if (ch && typeof ch.start === "number" && typeof ch.end === "number" && ch.end > ch.start) {
+      outro = { start: ch.start, end: ch.end };
+    }
+  }
+
+  let refDuration = 1440;
+  if (chapters.length > 0) {
+    const last = chapters[chapters.length - 1];
+    if (typeof last.end === "number" && last.end > 0) {
+      refDuration = last.end;
+    } else if (typeof last.start === "number" && last.start > 0) {
+      refDuration = last.start + 15;
+    }
+  } else if (outro && typeof outro.end === "number" && outro.end > 0) {
+    refDuration = Math.max(1440, outro.end + 10);
+  }
+
+  return { intro, outro, chapters, refDuration };
 }
 
 import { isStreamTokenExpired } from "./token-utils";
@@ -453,6 +529,8 @@ export async function decryptFlixStream(
 
   const hlsUrl = new TextDecoder().decode(decrypted);
 
+  const flixChapters = parseFlixChapters(pageData);
+
   return {
     accessId,
     version,
@@ -464,7 +542,154 @@ export async function decryptFlixStream(
     thumbnails_vtt: pageData.thumbnails_vtt || null,
     title: pageData.video_title || null,
     audio_type: pageData.audio_type || null,
+    intro: flixChapters.intro,
+    outro: flixChapters.outro,
+    chapters: flixChapters.chapters,
   };
+}
+
+const flixSkipTimesCache = new Map<
+  string,
+  {
+    intro: { start: number; end: number } | null;
+    outro: { start: number; end: number } | null;
+    chapters: Array<{ start: number; end?: number; title: string }>;
+    refDuration: number;
+    timestamp: number;
+  }
+>();
+
+export async function extractFlixSkipTimes(
+  accessId: string,
+  version = 1
+): Promise<{
+  intro: { start: number; end: number } | null;
+  outro: { start: number; end: number } | null;
+  chapters: Array<{ start: number; end?: number; title: string }>;
+  refDuration: number;
+}> {
+  if (!accessId || accessId === "undefined" || accessId === "null") {
+    return { intro: null, outro: null, chapters: [], refDuration: 1440 };
+  }
+  const cleanAccessId = accessId.replace(/^\/e\//, "").split("?")[0];
+  const cacheKey = `${cleanAccessId}-v${version}`;
+
+  const cached = flixSkipTimesCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < 30 * 60 * 1000) {
+    return { intro: cached.intro, outro: cached.outro, chapters: cached.chapters, refDuration: cached.refDuration || 1440 };
+  }
+
+  const embedUrl = `https://flixcloud.cc/e/${cleanAccessId}?v=${version}`;
+  let html = "";
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const res = await axios.get(embedUrl, {
+        timeout: 8000,
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+          Referer: BASE_URL,
+        },
+      });
+      if (res.data && typeof res.data === "string") {
+        html = res.data;
+        break;
+      }
+    } catch {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
+        const fRes = await fetch(embedUrl, {
+          signal: controller.signal,
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            Referer: BASE_URL,
+          },
+        });
+        clearTimeout(timeoutId);
+        if (fRes.ok) {
+          html = await fRes.text();
+          if (html) break;
+        }
+      } catch {}
+    }
+  }
+
+  if (!html) {
+    return { intro: null, outro: null, chapters: [], refDuration: 1440 };
+  }
+
+  const dataMatch = html.match(/data:\s*(\[[\s\S]*?\]),\s*form:/);
+  if (!dataMatch) {
+    return { intro: null, outro: null, chapters: [], refDuration: 1440 };
+  }
+
+  try {
+    const fn = new Function("return " + dataMatch[1]);
+    const dataArr = fn();
+    const pageData = dataArr.find(
+      (d: any) =>
+        d &&
+        d.data &&
+        (d.data.outro_chapter !== undefined ||
+          d.data.intro_chapter !== undefined ||
+          d.data.chapters !== undefined ||
+          d.data.obfuscated_crypto_data)
+    )?.data;
+
+    if (!pageData) {
+      return { intro: null, outro: null, chapters: [], refDuration: 1440 };
+    }
+
+    const res = parseFlixChapters(pageData);
+    flixSkipTimesCache.set(cacheKey, { ...res, timestamp: Date.now() });
+    return res;
+  } catch {
+    return { intro: null, outro: null, chapters: [], refDuration: 1440 };
+  }
+}
+
+export async function getReanimeSkipTimes({
+  anilistId,
+  query,
+  episode = 1,
+  accessId,
+  version = 1,
+}: {
+  anilistId?: number | string | null;
+  query?: string | null;
+  episode?: number | string;
+  accessId?: string | null;
+  version?: number;
+}): Promise<{
+  intro: { start: number; end: number } | null;
+  outro: { start: number; end: number } | null;
+  chapters: Array<{ start: number; end?: number; title: string }>;
+  refDuration: number;
+}> {
+  if (accessId) {
+    return await extractFlixSkipTimes(accessId, version);
+  }
+
+  const target = anilistId || query;
+  if (!target) {
+    return { intro: null, outro: null, chapters: [], refDuration: 1440 };
+  }
+
+  try {
+    const srvData = await getReanimeServers(target, episode);
+    const servers = srvData?.servers || [];
+    const validServer = servers.find((s: any) => s.access_id);
+    if (!validServer?.access_id) {
+      return { intro: null, outro: null, chapters: [], refDuration: 1440 };
+    }
+
+    return await extractFlixSkipTimes(validServer.access_id, validServer.version || 1);
+  } catch (err: any) {
+    console.warn("[getReanimeSkipTimes] Error:", err?.message || err);
+    return { intro: null, outro: null, chapters: [], refDuration: 1440 };
+  }
 }
 
 // ---------- API Functions ----------
@@ -614,12 +839,20 @@ export interface ReanimeEpisodeServers {
 }
 
 export interface ReanimeEpisodeSourceItem {
+  id?: string;
+  server?: string;
+  name?: string;
   type: "SUB" | "DUB";
+  audio?: "sub" | "dub";
   language: string;
   videoUrl: string;
+  m3u8?: string;
   quality: string;
   isHls: boolean;
   serverName: string;
+  intro?: { start: number; end: number } | null;
+  outro?: { start: number; end: number } | null;
+  chapters?: Array<{ start: number; end?: number; title: string }>;
   subtitles?: Array<{
     language: string;
     label: string;
@@ -779,14 +1012,25 @@ export async function getReanimeEpisodeSources(
             };
           });
 
+          const isKittySrv = (s.server || "").includes("2") || (s.server || "").toUpperCase().includes("HD-2");
+          const srvDisplayName = isKittySrv ? "Kitty" : "Flow";
+          const srvId = isKittySrv ? `kitty-${isDub ? "dub" : "sub"}` : `flow-${isDub ? "dub" : "sub"}`;
           sources.push({
+            id: srvId,
+            server: srvDisplayName,
+            name: srvDisplayName,
             type: isDub ? "DUB" : "SUB",
+            audio: isDub ? "dub" : "sub",
             language: isDub ? "English Dub" : "Japanese",
             videoUrl: proxyUrl,
+            m3u8: proxyUrl,
             quality: "1080p",
             isHls: true,
-            serverName: isDub ? `${s.server} (English Dub)` : `${s.server} (Sub)`,
+            serverName: isDub ? `${srvDisplayName} (English Dub)` : `${srvDisplayName} (Sub)`,
             subtitles: srvSubtitles.length > 0 ? srvSubtitles : undefined,
+            intro: s.intro || streamData.intro || null,
+            outro: s.outro || streamData.outro || null,
+            chapters: s.chapters || streamData.chapters || [],
           });
         }
         reanimeSourcesCache.set(cacheKey, { data: sources, timestamp: Date.now() });
@@ -971,6 +1215,9 @@ export interface ReanimeServerInfo {
   m3u8_sub?: string;
   m3u8_dub?: string;
   embed_player?: string | null;
+  intro?: { start: number; end: number } | null;
+  outro?: { start: number; end: number } | null;
+  chapters?: Array<{ start: number; end?: number; title: string }>;
   subtitles?: Array<{
     language: string;
     label?: string;
@@ -1007,6 +1254,10 @@ export interface FindAndStreamResult {
   hls: string;
   pk: string;
   subtitles: any[];
+  intro?: { start: number; end: number } | null;
+  outro?: { start: number; end: number } | null;
+  chapters?: Array<{ start: number; end?: number; title: string }>;
+  refDuration?: number;
   all_servers: ReanimeServerInfo[] | null;
   available_servers: Array<{
     server: string;
@@ -1292,6 +1543,10 @@ export async function findAndStream({
     hls: streamInfo.hls,
     pk: streamInfo.pk,
     subtitles: streamInfo.subtitles || [],
+    intro: streamInfo?.intro || null,
+    outro: streamInfo?.outro || null,
+    chapters: streamInfo?.chapters || [],
+    refDuration: streamInfo?.refDuration || (streamInfo?.chapters?.length && streamInfo.chapters[streamInfo.chapters.length - 1]?.end ? streamInfo.chapters[streamInfo.chapters.length - 1].end : 1440),
     all_servers: isAllServers ? allDecrypted : null,
     available_servers: srvData.servers.map((s: any) => ({
       server: s.serverName,

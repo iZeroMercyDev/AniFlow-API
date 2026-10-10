@@ -1,4 +1,4 @@
-import axios from "axios";
+import { getAniFlowSkipSummary, getAniSkipTimes } from "./aniskip";
 
 export interface SkipTimeInterval {
   start: number;
@@ -8,62 +8,47 @@ export interface SkipTimeInterval {
 export interface EpisodeSkipTimes {
   intro: SkipTimeInterval | null;
   outro: SkipTimeInterval | null;
+  rawIntro?: SkipTimeInterval | null;
+  rawOutro?: SkipTimeInterval | null;
+  refDuration?: number | null;
+  actualDuration?: number | null;
+  adapted?: boolean;
+  found?: boolean;
 }
 
-const skipTimesCache = new Map<string, { data: EpisodeSkipTimes; timestamp: number }>();
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
-
 /**
- * Resolves opening and ending skip timestamps via AniSkip API
+ * Resolves opening and ending skip timestamps via AniSkip API with intelligent adaptation and caching.
  */
 export async function getEpisodeSkipTimes(
-  malId: number | null | undefined,
+  animeId: number | string | null | undefined,
   episodeNumber: number,
-  episodeLengthSeconds: number = 0
+  episodeLengthSeconds: number = 0,
+  isMalId: boolean = false
 ): Promise<EpisodeSkipTimes> {
-  if (!malId) {
-    return { intro: null, outro: null };
-  }
-
-  const cacheKey = `${malId}-${episodeNumber}`;
-  const cached = skipTimesCache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-    return cached.data;
+  if (!animeId) {
+    return { intro: null, outro: null, found: false };
   }
 
   try {
-    const url = `https://api.aniskip.com/v2/skip-times/${malId}/${episodeNumber}?types=op&types=ed&episodeLength=${Math.floor(episodeLengthSeconds)}`;
-    const res = await axios.get(url, {
-      timeout: 3500,
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Aniflow-API",
-        Accept: "application/json",
-      },
+    const summary = await getAniFlowSkipSummary({
+      animeId,
+      episodeNumber,
+      actualDuration: episodeLengthSeconds > 0 ? episodeLengthSeconds : undefined,
+      isMalId,
     });
 
-    let intro: SkipTimeInterval | null = null;
-    let outro: SkipTimeInterval | null = null;
-
-    if (res.data?.found && Array.isArray(res.data.results)) {
-      for (const item of res.data.results) {
-        if (item.skipType === "op" && item.interval) {
-          intro = {
-            start: Math.floor(item.interval.startTime),
-            end: Math.floor(item.interval.endTime),
-          };
-        } else if (item.skipType === "ed" && item.interval) {
-          outro = {
-            start: Math.floor(item.interval.startTime),
-            end: Math.floor(item.interval.endTime),
-          };
-        }
-      }
-    }
-
-    const result = { intro, outro };
-    skipTimesCache.set(cacheKey, { data: result, timestamp: Date.now() });
-    return result;
-  } catch {
-    return { intro: null, outro: null };
+    return {
+      intro: summary.intro,
+      outro: summary.outro,
+      rawIntro: summary.rawIntro,
+      rawOutro: summary.rawOutro,
+      refDuration: summary.refDuration,
+      actualDuration: summary.actualDuration,
+      adapted: summary.adapted,
+      found: summary.found,
+    };
+  } catch (err: any) {
+    console.warn("[getEpisodeSkipTimes] Error:", err?.message || err);
+    return { intro: null, outro: null, found: false };
   }
 }

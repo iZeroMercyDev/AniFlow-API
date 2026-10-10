@@ -211,9 +211,7 @@ export async function getEmbedInfo(
       { id: "yuki", default: true, tip: "Soft sub" },
       { id: "zuna", default: false, tip: "Zuna" },
     ];
-    const dubProviders = (servers.dubProviders && servers.dubProviders.length > 0) ? servers.dubProviders : [
-      { id: "yuki", default: true, tip: "Soft sub" },
-    ];
+    const dubProviders = servers.dubProviders && servers.dubProviders.length > 0 ? servers.dubProviders : [];
 
     const parsedInfo: AnimexEmbedInfo = {
       slug: knownSlug,
@@ -459,12 +457,12 @@ export async function resolveAnimexPlayStream({
       candidateProviders.push(p.id);
     }
   }
-  if (!candidateProviders.includes("yuki") && !isBlockedAnimexProvider("yuki")) {
+  if (type === "sub" && !candidateProviders.includes("yuki") && !isBlockedAnimexProvider("yuki")) {
     candidateProviders.push("yuki");
   }
 
-  // Optimize speed: for SUB, prioritize 'zuna' (Zuri) first as it responds in ~600ms
-  if (type === "sub") {
+  // Optimize speed: for SUB, only prioritize 'zuna' (Zuri) first if no specific provider was requested
+  if (!provider && type === "sub") {
     const zIdx = candidateProviders.indexOf("zuna");
     if (zIdx > -1) {
       candidateProviders.splice(zIdx, 1);
@@ -506,19 +504,6 @@ export async function resolveAnimexPlayStream({
       }
     } catch (err: any) {
       lastError = err;
-    }
-  }
-
-  if (!result || !result.sources?.[0] || !selectedProvider) {
-    if (type === "dub") {
-      try {
-        const subRes = await getSource(targetSlug, episode, "sub", "zuna");
-        if (subRes?.sources && subRes.sources.length > 0 && subRes.sources[0]?.url) {
-          result = subRes;
-          selectedProvider = "Zuri";
-          type = "sub";
-        }
-      } catch {}
     }
   }
 
@@ -632,8 +617,8 @@ export async function getAnimexEpisodeSources(
     // 2. Resolve DUB providers: Yuri only
     const targetDubProviders: AnimexProvider[] = [];
     const existingDubYuri = info.dubProviders?.find((p) => p.id.toLowerCase() === "yuki" || p.id.toLowerCase() === "yuri");
-    if (existingDubYuri || (info.dubProviders && info.dubProviders.length > 0)) {
-      targetDubProviders.push(existingDubYuri || { id: "yuri", default: true, tip: "Yuri" });
+    if (existingDubYuri) {
+      targetDubProviders.push(existingDubYuri);
     }
 
     for (const p of targetDubProviders) {

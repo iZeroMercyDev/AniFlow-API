@@ -5,7 +5,7 @@
 <h1 align="center">AniFlow API</h1>
 
 <p align="center">
-  <strong>Stream Anime on Any Website — High-Performance Anime Streaming & Embed API</strong>
+  <strong>Stream Anime on Any Website — High-Performance Multi-Server Anime Streaming & Embed API</strong>
 </p>
 
 <p align="center">
@@ -17,74 +17,68 @@
 </p>
 
 <p align="center">
-  <a href="#-tags-topics--search-queries"><img src="https://img.shields.io/badge/Topics-anime--api%20%7C%20anime--embed%20%7C%20anilist%20%7C%20myanimelist%20%7C%20hls--streaming-purple?style=flat-square" alt="Topics" /></a>
-  <a href="#-tags-topics--search-queries"><img src="https://img.shields.io/badge/Features-autoskip%20%7C%20aniskip%20%7C%20postMessage%20%7C%20sub--dub-zinc?style=flat-square" alt="Features" /></a>
+  <a href="#-tags-topics--search-queries"><img src="https://img.shields.io/badge/Servers-Flow%20%7C%20Kitty%20%7C%20Yuri%20%7C%20Zuri%20%7C%20Buzz-blueviolet?style=flat-square" alt="Servers" /></a>
+  <a href="#-tags-topics--search-queries"><img src="https://img.shields.io/badge/Features-autoskip%20%7C%20aniskip%20%7C%20postMessage%20%7C%20strict--dub-zinc?style=flat-square" alt="Features" /></a>
 </p>
 
 ---
 
 ## 📖 Overview
 
-**AniFlow API** is a complete, self-hostable anime embedding backend and modern streaming player. It enables developers to seamlessly embed high-performance anime playback directly into their websites and applications with a single iframe URL.
+**AniFlow API** is a production-grade, self-hostable anime embedding backend and modern streaming player. It allows developers to integrate high-performance anime playback into any website or application using a single iframe URL or lightweight REST endpoints.
 
-Designed from the ground up for speed, reliability, and visual polish, AniFlow features multi-server fallback routing, intelligent AniList/MAL identifier mapping, automatic intro/outro skipping, sub-second HLS proxying, bidirectional `postMessage` synchronization, and native mobile gesture controls with 16:9 fullscreen locking.
-
----
-
-## ✨ Features
-
-- **Multi-Server Streaming Route Engine**:
-  - **Flow 1**: High-throughput primary stream (Sub & Dub).
-  - **Flow 2**: Backup high-speed mirror (Sub & Dub).
-  - **Yuri**: Specialized anime stream extractor (Sub & Dub).
-  - **Zuri**: Dedicated subbed stream source (Sub only).
-- **Dual Database Mapping**: Seamless support for both **AniList** (`/embed/ani/...`) and **MyAnimeList** (`/embed/mal/...`) IDs with automated fallback resolution.
-- **Liquid Glass Dark Minimalist Player**: Crafted with the unified `shad-renew` aesthetic—featuring backdrop blur capsules, true inset highlights, subtle glow markers, and zero visual clutter.
-- **Mobile First & 16:9 Fullscreen**: Native mobile gestures (smart single-tap controls toggle, double-tap left/right 10s seek) and strict 16:9 landscape orientation lock on phones.
-- **Auto-Skip Intro & Outro**: Native integration with the AniSkip API. Timestamps are highlighted directly on the timeline scrubber with automatic transition capabilities.
-- **Complete In-Player Customization**:
-  - **Server Selection**: Dedicated Sub/Dub categorical server browser.
-  - **Subtitle Customizer**: Control font family (*Sans*, *Anime*, *Serif*, *Mono*), font size, subtitle color, background box, and text outline/shadow.
-  - **Playback Speed**: Precision slider with presets from `0.25x` to `2.0x`.
-  - **Volume Boost**: Up to `200%` digital audio boost using the Web Audio API.
-  - **Quality Selector**: Auto-adaptive HLS level selection and manual resolution picking.
-- **Two-Way `postMessage` API**: Stream real-time playback events (`time`, `play`, `pause`, `complete`) to the parent site and remotely control playback via commands.
-- **Edge HLS Proxying**: Direct `.m3u8` fast-path streaming, header normalization, and memory caching to keep bandwidth off upstream providers.
+Built for speed, reliability, and visual polish, AniFlow features:
+- **5-Server Redundant Architecture** (`Flow`, `Kitty`, `Yuri`, `Zuri`, `Buzz`).
+- **Strict Dub Verification**: Eliminates silent Japanese fallbacks on English dub streams.
+- **Dual ID Resolution**: Works seamlessly with both **AniList** (`/embed/ani/...`) and **MyAnimeList** (`/embed/mal/...`) IDs.
+- **Adaptive Skip-Times Engine**: Dual-source OP/ED markers via Re:ANIME & AniSkip APIs with duration compensation.
+- **Resilient Multilingual Subtitle Proxy**: Seamless track persistence across server switching.
+- **Liquid Glass Dark Minimalist Player**: Crafted with the unified `shad-renew` aesthetic.
+- **Two-Way `postMessage` Bus**: Bidirectional playback telemetry and remote iframe control.
 
 ---
 
-## 🚀 Quick Start
+## ⚡ Multi-Server Architecture
 
-### Prerequisites
+AniFlow intelligently routes and normalizes anime video streams across 5 dedicated servers, each optimized for stability and format support:
 
-- [Node.js](https://nodejs.org/) (version `18.17.0` or higher)
-- `npm`, `yarn`, or `pnpm`
+| Server | Upstream Provider | Audio Types | Highlights |
+| :--- | :--- | :--- | :--- |
+| **Flow** | Re:ANIME (HD-1) | `SUB`, `DUB` | Primary ultra-fast CDN stream with native Re:ANIME OP/ED skip timestamps. |
+| **Kitty** | Re:ANIME (HD-2) | `SUB`, `DUB` | High-speed backup mirror with identical low-latency pipeline and skip support. |
+| **Yuri** | AniEmbed Core | `SUB`, `DUB` | High-definition soft-sub extractor with up to 16 external subtitle languages. |
+| **Zuri** | AniEmbed Zuna | `SUB` only | Specialized Japanese subbed backup engine. |
+| **Buzz** | MegaPlay Buzz | `SUB`, `DUB` | Adaptive HLS engine routed via custom edge `.m3u8` proxy with dynamic key management. |
 
-### Installation
+### 🛡️ Strict Dub Verification (Anti-Fallback Engine)
+Many third-party providers silently fall back to raw Japanese audio when an English dub track does not exist for an episode. AniFlow intercepts this behavior at both the API and player levels:
+- Audio streams are deeply inspected before presentation.
+- If a provider makes a silent fallback to Japanese subbed audio, that server is excluded from the dub roster.
+- For anime without any English dub releases, the Dub selector is safely disabled, and the player automatically routes to Sub with a notification.
 
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/realmichaelstetson/AniFlow-API.git
-   cd AniFlow-API
-   ```
+---
 
-2. **Install dependencies**:
-   ```bash
-   npm install
-   ```
+## ✨ Player Capabilities
 
-3. **Start the development server**:
-   ```bash
-   npm run dev
-   ```
-
-   Open [http://localhost:3000](http://localhost:3000) in your browser to view the interactive documentation and embedded preview player.
-
-4. **Production Build**:
-   ```bash
-   npm run build
-   npm run start
-   ```
+- **Liquid Glass `shad-renew` Design**:
+  - Backdrop blur floating capsules, true inset borders, and minimal glow indicators.
+  - Zero clutter: controls fade out cleanly during active playback.
+- **Timeline OP/ED Markers & Auto-Skip**:
+  - Highlights Opening (OP) and Ending (ED) segments directly on the timeline scrubber.
+  - Automatically skips intros and outros when enabled, or offers instant 1-click skip buttons.
+  - Powered by native Re:ANIME timestamps for Flow/Kitty, and AniSkip API with duration compensation for Yuri, Zuri, and Buzz.
+- **Multilingual Subtitle Suite**:
+  - Up to 16 languages (English, Spanish, French, German, Italian, Portuguese, Polish, Russian, etc.).
+  - Subtitle persistence across server switches with real-time `/api/play` fallback resolution.
+  - Subtitle styling customizer: font family (*Sans*, *Anime*, *Serif*, *Mono*), size, text color, background opacity, and outlines.
+- **Audio & Video Enhancements**:
+  - **Volume Booster**: Digital amplification up to `200%` using the Web Audio API.
+  - **Speed Slider**: Fluid playback rates ranging from `0.25x` to `2.0x`.
+  - **Resolution Selector**: HLS adaptive auto-bitrate or manual resolution pinning (`1080p`, `720p`, `480p`, `360p`).
+- **Mobile Gestures & Landscape Lock**:
+  - Smart tap toggles controls without glitching.
+  - Double-tap left/right for $\pm 10\text{s}$ seeking.
+  - Auto 16:9 fullscreen orientation locking on mobile browsers.
 
 ---
 
@@ -92,7 +86,7 @@ Designed from the ground up for speed, reliability, and visual polish, AniFlow f
 
 ### 1. Direct Embed URLs
 
-Embed the player anywhere using standard URL patterns:
+Embed the player anywhere with zero configuration using standardized URL patterns:
 
 #### AniList Pattern:
 ```http
@@ -104,29 +98,29 @@ GET /embed/ani/{anilistId}/{episode}/{audio}?server={server}
 GET /embed/mal/{malId}/{episode}/{audio}?server={server}
 ```
 
-#### URL Parameters:
+#### URL Path Parameters:
 | Parameter | Type | Required | Description |
 | :--- | :--- | :--- | :--- |
-| `anilistId` / `malId` | `number` | **Yes** | Anime identifier from AniList or MyAnimeList. |
-| `episode` | `number` | **Yes** | Episode number (default: `1`). |
-| `audio` | `string` | No | Audio track: `sub` (default) or `dub`. |
+| `anilistId` / `malId` | `number` | **Yes** | Anime ID from AniList or MyAnimeList. |
+| `episode` | `number` | **Yes** | Episode index (e.g. `1`, `12`). |
+| `audio` | `string` | No | Audio preference: `sub` (default) or `dub`. |
 
 #### Query Parameters:
-| Query Key | Values | Default | Description |
+| Query Key | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `server` | `flow` \| `flow2` \| `yuri` \| `zuri` | `flow` | Specific streaming provider. (`zuri` is sub-only). |
-| `startAt` / `progress` | `number` (seconds) | `0` | Start playback at $N$ seconds. |
-| `autoskipIntro` | `1` \| `0` | `1` | Enable or disable automatic intro skip. |
-| `autoskipOutro` | `1` \| `0` | `1` | Enable or disable automatic outro skip. |
-| `parentHost` | `string` | *(auto)* | Explicit domain if parent frame strips referer headers. |
+| `server` | `string` | `flow` | Preferred server: `flow`, `kitty`, `yuri`, `zuri`, `buzz`. |
+| `startAt` / `progress` | `number` | `0` | Start playback at $N$ seconds. |
+| `autoskipIntro` | `1` \| `0` | `1` | Automatically skip opening themes (`1` = enabled, `0` = disabled). |
+| `autoskipOutro` | `1` \| `0` | `1` | Automatically skip ending themes (`1` = enabled, `0` = disabled). |
+| `parentHost` | `string` | *(auto)* | Explicit domain if parent frame enforces referer stripping. |
 
 ---
 
-### 2. Session Ticket Generation API
-
-Generate programmatic playback sessions and ticketed embed URLs via backend requests.
+### 2. REST API Endpoints
 
 #### `POST /api/play`
+Generates a streaming session ticket and extracts direct stream manifests with subtitles and skip times:
+
 ```bash
 curl -X POST https://your-domain.com/api/play \
   -H "Content-Type: application/json" \
@@ -135,17 +129,42 @@ curl -X POST https://your-domain.com/api/play \
     "episode": 1,
     "audio": "sub",
     "server": "flow",
-    "startAt": 120
+    "startAt": 0
   }'
 ```
 
-#### JSON Response:
+**JSON Response:**
 ```json
 {
   "success": true,
   "ticket": "9f8a3d1b-...",
-  "embedUrl": "https://your-domain.com/embed?t=9f8a3d1b-...&progress=120"
+  "embedUrl": "https://your-domain.com/embed?t=9f8a3d1b-...",
+  "stream": {
+    "url": "https://your-domain.com/api/proxy/m3u8?url=...",
+    "format": "hls",
+    "server": "flow",
+    "audio": "sub",
+    "subtitles": [
+      { "language": "English", "url": "https://your-domain.com/api/proxy/subtitles?url=..." }
+    ],
+    "skipTimes": {
+      "intro": { "start": 90, "end": 180 },
+      "outro": { "start": 1320, "end": 1410 }
+    }
+  }
 }
+```
+
+#### `GET /api/anime/skip-times`
+Fetches OP/ED timestamps from AniSkip adjusted for target episode duration:
+```http
+GET /api/anime/skip-times?malId=16498&episode=1&duration=1440
+```
+
+#### `GET /api/anime/flow-skip-times`
+Fetches Re:ANIME native skip markers for Flow & Kitty:
+```http
+GET /api/anime/flow-skip-times?anilistId=16498&episode=1
 ```
 
 ---
@@ -157,7 +176,7 @@ curl -X POST https://your-domain.com/api/play \
 ```html
 <div style="position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden; border-radius: 16px;">
   <iframe
-    src="https://your-domain.com/embed/ani/16498/1/sub?server=flow"
+    src="https://your-domain.com/embed/ani/16498/1/sub?server=flow&autoskipIntro=1"
     style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0;"
     allowfullscreen
     allow="autoplay; fullscreen; picture-in-picture"
@@ -176,7 +195,8 @@ interface AnimePlayerProps {
   anilistId: number;
   episode?: number;
   audio?: "sub" | "dub";
-  server?: "flow" | "flow2" | "yuri" | "zuri";
+  server?: "flow" | "kitty" | "yuri" | "zuri" | "buzz";
+  autoSkip?: boolean;
 }
 
 export function AnimePlayer({
@@ -184,8 +204,9 @@ export function AnimePlayer({
   episode = 1,
   audio = "sub",
   server = "flow",
+  autoSkip = true,
 }: AnimePlayerProps) {
-  const embedUrl = `https://your-domain.com/embed/ani/${anilistId}/${episode}/${audio}?server=${server}`;
+  const embedUrl = `https://your-domain.com/embed/ani/${anilistId}/${episode}/${audio}?server=${server}&autoskipIntro=${autoSkip ? 1 : 0}`;
 
   return (
     <div className="relative aspect-video w-full rounded-2xl overflow-hidden bg-black shadow-2xl">
@@ -202,40 +223,42 @@ export function AnimePlayer({
 
 ---
 
-### 3. Parent Window postMessage Integration
+### 3. Bidirectional `postMessage` Integration
 
-#### Listen for Playback Events:
+Communicate directly with the embedded player from the parent window.
+
+#### Listen for Events:
 ```javascript
 window.addEventListener("message", (event) => {
   const data = event.data;
   if (!data) return;
 
-  // Real-time structured player events
+  // Real-time playback status events
   if (data.type === "PLAYER_EVENT") {
-    console.log("Player State Changed:", data.data);
-    // data.data: { type: "time"|"play"|"pause"|"complete"|"error", currentTime, duration }
+    console.log("Player Event:", data.data);
+    // Payload: { type: "play" | "pause" | "time" | "complete" | "error", currentTime, duration }
   }
 
-  // Periodic watch progress (every ~1s)
+  // Periodic watch progress (~1s intervals)
   if (data.type === "watching-log") {
     console.log("Watch Progress:", data.currentTime, "/", data.duration);
   }
 });
 ```
 
-#### Remote Control the Player:
+#### Dispatch Player Commands:
 ```javascript
-const iframe = document.getElementById("aniflow-player");
+const playerIframe = document.getElementById("aniflow-player");
 
-// Play / Pause
-iframe.contentWindow.postMessage({ command: "play" }, "*");
-iframe.contentWindow.postMessage({ command: "pause" }, "*");
+// Control Playback
+playerIframe.contentWindow.postMessage({ command: "play" }, "*");
+playerIframe.contentWindow.postMessage({ command: "pause" }, "*");
 
-// Seek to 90 seconds
-iframe.contentWindow.postMessage({ command: "seek", time: 90 }, "*");
+// Seek to a specific timestamp (in seconds)
+playerIframe.contentWindow.postMessage({ command: "seek", time: 120 }, "*");
 
-// Query current playback status
-iframe.contentWindow.postMessage({ command: "getStatus" }, "*");
+// Request current playback status snapshot
+playerIframe.contentWindow.postMessage({ command: "getStatus" }, "*");
 ```
 
 ---
@@ -246,38 +269,72 @@ iframe.contentWindow.postMessage({ command: "getStatus" }, "*");
 aniflow-api/
 ├── app/
 │   ├── api/
-│   │   ├── anime/skip-times/    # AniSkip proxy endpoint
-│   │   ├── play/                # Stream resolution & ticket API
-│   │   ├── progress/            # Watch time tracker endpoint
-│   │   └── proxy/               # Edge HLS proxy (m3u8, ts segments, keys)
+│   │   ├── anime/
+│   │   │   ├── flow-skip-times/ # Re:ANIME OP/ED skip extraction
+│   │   │   └── skip-times/      # AniSkip integration with duration adjustment
+│   │   ├── play/                # Core stream resolver & ticket factory
+│   │   ├── progress/            # Playback tracking & telemetry endpoint
+│   │   └── proxy/               # Edge HLS proxy (m3u8, segment, subtitles, key)
 │   ├── embed/
-│   │   ├── ani/[anilistId]/     # Dynamic AniList embed routes
-│   │   └── mal/[malId]/         # Dynamic MAL embed routes
+│   │   ├── ani/[anilistId]/     # AniList-based embed routes
+│   │   └── mal/[malId]/         # MyAnimeList-based embed routes
 │   ├── globals.css              # Global styles & theme definitions
 │   ├── layout.tsx               # Root layout & site metadata
 │   └── page.tsx                 # Documentation & interactive player hero
 ├── components/
 │   └── player/
 │       ├── embed-player.tsx     # Full-featured HLS streaming player
-│       └── embed-page-client.tsx# Standalone embed viewport wrapper
+│       ├── embed-page-client.tsx# Standalone embed viewport wrapper
+│       └── player-core/         # Player state & subtitle scoping helpers
 ├── lib/
 │   ├── aniembed-extractor.ts    # Yuri & Zuri stream extraction engine
-│   ├── reanime.ts               # Flow 1 & Flow 2 extraction engine
-│   ├── skip-times.ts            # AniSkip client integration
+│   ├── aniskip.ts               # AniSkip client integration
+│   ├── buzz.ts                  # Buzz (MegaPlay) extraction & proxy engine
+│   ├── reanime.ts               # Flow & Kitty extraction engine
+│   ├── skip-times-adapter.ts    # Skip time duration scaling & fallback logic
 │   └── utils.ts                 # Utility & styling helper functions
-├── public/
-│   ├── favicon.svg              # Vector aniflow favicon
-│   ├── logo.svg                 # Vector aniflow brand logo
-│   └── icons/                   # App & touch icons
-├── package.json
+├── shared/
+│   └── validators.ts            # Input validation & schema definitions
+├── public/                      # Static brand assets & logos
 └── tailwind.config.ts           # Design system & color tokens
 ```
 
 ---
 
-## ⚡ Deployment
+## 🚀 Getting Started
 
-### Deploy with Docker
+### Prerequisites
+- [Node.js](https://nodejs.org/) (`v18.17.0` or higher)
+- `npm`, `yarn`, or `pnpm`
+
+### Installation
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/realmichaelstetson/AniFlow-API.git
+   cd AniFlow-API
+   ```
+
+2. **Install dependencies**:
+   ```bash
+   npm install
+   ```
+
+3. **Run the development server**:
+   ```bash
+   npm run dev
+   ```
+   Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+4. **Production Build**:
+   ```bash
+   npm run build
+   npm run start
+   ```
+
+---
+
+## ⚡ Deployment with Docker
 
 ```dockerfile
 FROM node:18-alpine AS runner
@@ -291,7 +348,6 @@ EXPOSE 3000
 CMD ["npm", "start"]
 ```
 
-Build and run:
 ```bash
 docker build -t aniflow-api .
 docker run -p 3000:3000 aniflow-api
@@ -301,10 +357,9 @@ docker run -p 3000:3000 aniflow-api
 
 ## ⚖️ Legal & DMCA Disclaimer
 
-AniFlow API is an open-source stream aggregator and playback client designed solely for educational and integration purposes. AniFlow **does not host, store, or upload** any video files or copyrighted media on its servers. All video streams and metadata are resolved dynamically from publicly available, third-party internet endpoints. 
+AniFlow API is an open-source stream aggregator and playback client designed solely for educational and integration purposes. AniFlow **does not host, store, or upload** any video files or copyrighted media on its servers. All video streams and metadata are resolved dynamically from publicly available, third-party internet endpoints.
 
 Any copyright claims or DMCA requests should be directed to the respective upstream media hosts.
-
 
 ---
 

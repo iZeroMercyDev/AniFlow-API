@@ -1,6 +1,6 @@
 import http from "http";
 import https from "https";
-import axios, { AxiosRequestConfig } from "axios";
+import axios, { AxiosRequestConfig, AxiosProxyConfig } from "axios";
 import { HttpsProxyAgent } from "https-proxy-agent";
 
 /**
@@ -56,6 +56,60 @@ export function getOutboundHttpAgent(): http.Agent | HttpsProxyAgent {
 
 export function hasOutboundProxy(): boolean {
   return Boolean(proxyAgent || SCRAPER_API_KEY || FLARESOLVERR_URL);
+}
+
+/**
+ * Parses a proxy URL string into an AxiosProxyConfig object.
+ */
+export function getAxiosProxyConfig(envVarName: string = "STREAM_PROXY_URL"): AxiosProxyConfig | false {
+  const proxyUrl =
+    process.env[envVarName] ||
+    process.env.SCRAPER_PROXY_URL ||
+    process.env.OUTBOUND_PROXY_URL ||
+    process.env.PROXY_URL ||
+    process.env.HTTPS_PROXY ||
+    process.env.HTTP_PROXY;
+
+  if (!proxyUrl || !proxyUrl.trim()) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(proxyUrl.trim());
+    const config: AxiosProxyConfig = {
+      protocol: parsed.protocol.replace(":", ""),
+      host: parsed.hostname,
+      port: parseInt(parsed.port, 10) || (parsed.protocol === "https:" ? 443 : 80),
+    };
+
+    if (parsed.username || parsed.password) {
+      config.auth = {
+        username: decodeURIComponent(parsed.username || ""),
+        password: decodeURIComponent(parsed.password || ""),
+      };
+    }
+
+    return config;
+  } catch (err: any) {
+    console.warn(`[proxy-agent] Failed to parse proxy URL (${envVarName}):`, err.message);
+    return false;
+  }
+}
+
+/**
+ * Checks if an upstream scraper/stream proxy is configured in environment variables.
+ */
+export function isUpstreamProxyConfigured(): boolean {
+  return Boolean(
+    process.env.STREAM_PROXY_URL ||
+    process.env.SCRAPER_PROXY_URL ||
+    process.env.OUTBOUND_PROXY_URL ||
+    process.env.PROXY_URL ||
+    process.env.HTTPS_PROXY ||
+    process.env.HTTP_PROXY ||
+    process.env.SCRAPER_API_KEY ||
+    process.env.FLARESOLVERR_URL
+  );
 }
 
 export function isCloudflareChallenge(data: any): boolean {

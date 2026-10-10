@@ -5,6 +5,7 @@ import https from "https";
 import { decryptFlixStream, findAndStream } from "@/lib/reanime";
 import { getFreshStreamToken } from "@/lib/token-refresher";
 import { isStreamTokenExpired } from "@/lib/token-utils";
+import { isSafePublicUrl } from "@/shared/validators";
 
 export const dynamic = "force-dynamic";
 
@@ -59,6 +60,13 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       { error: "Missing url parameter" },
       { status: 400, headers: CORS_HEADERS }
+    );
+  }
+
+  if (!isSafePublicUrl(targetUrl)) {
+    return NextResponse.json(
+      { error: "Prohibited URL (SSRF protection)", code: 403 },
+      { status: 403, headers: CORS_HEADERS }
     );
   }
 
@@ -212,6 +220,10 @@ export async function GET(request: NextRequest) {
         }
       };
 
+      let isExpectingSegment = false;
+      let isExpectingChildPlaylist = false;
+      let segmentsEncrypted = false;
+
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         const trimmed = line.trim();
@@ -328,6 +340,10 @@ export async function GET(request: NextRequest) {
         }
 
         // Rewrite #EXT-X-KEY lines (AES-128 encryption key)
+        if (trimmed.startsWith("#EXT-X-KEY:")) {
+          const methodMatch = trimmed.match(/METHOD=([A-Z0-9-]+)/i);
+          segmentsEncrypted = Boolean(methodMatch && methodMatch[1].toUpperCase() !== "NONE");
+        }
         if (trimmed.startsWith("#EXT-X-KEY:") && /URI=["']?([^"',\s]+)["']?/.test(trimmed)) {
           const rewrittenKey = line.replace(/URI=["']?([^"',\s]+)["']?/, (m, uri) => {
             const abs = resolveUrlWithBase(uri);
@@ -345,28 +361,43 @@ export async function GET(request: NextRequest) {
           continue;
         }
 
-        // Rewrite child m3u8 playlist lines
-        if (!trimmed.startsWith("#") && (trimmed.endsWith(".m3u8") || trimmed.includes(".m3u8?") || trimmed.endsWith(".txt") || trimmed.includes(".txt?"))) {
+        // Track whether following line is a media segment or child playlist
+        if (trimmed.startsWith("#EXTINF:")) {
+          isExpectingSegment = true;
+          isExpectingChildPlaylist = false;
+        } else if (trimmed.startsWith("#EXT-X-STREAM-INF:")) {
+          isExpectingChildPlaylist = true;
+          isExpectingSegment = false;
+        }
+
+        // Process URI lines (non-comment lines)
+        if (!trimmed.startsWith("#")) {
           const abs = resolveUrlWithBase(trimmed);
           const refParam = effectiveReferer ? `&referer=${encodeURIComponent(effectiveReferer)}` : "";
           const origParam = effectiveOrigin ? `&origin=${encodeURIComponent(effectiveOrigin)}` : "";
           const uaParam = ua ? `&ua=${encodeURIComponent(ua)}` : "";
-          rewrittenLines.push(
-            `/api/proxy/m3u8?url=${encodeURIComponent(abs)}&pk=${encodeURIComponent(pk || "")}&audio=${audio}${aidParam}${vParam}${qParam}${epParam}${srvParam}${refParam}${origParam}${uaParam}`
-          );
-          continue;
-        }
 
-        // Rewrite media segment lines
-        if (!trimmed.startsWith("#")) {
-          const abs = resolveUrlWithBase(trimmed);
+          // Explicitly following #EXT-X-STREAM-INF or explicitly an .m3u8 playlist URL
+          const isPlaylistUrl =
+            isExpectingChildPlaylist ||
+            trimmed.endsWith(".m3u8") ||
+            trimmed.includes(".m3u8?");
+
+          if (isPlaylistUrl && !isExpectingSegment) {
+            isExpectingChildPlaylist = false;
+            rewrittenLines.push(
+              `/api/proxy/m3u8?url=${encodeURIComponent(abs)}&pk=${encodeURIComponent(pk || "")}&audio=${audio}${aidParam}${vParam}${qParam}${epParam}${srvParam}${refParam}${origParam}${uaParam}`
+            );
+            continue;
+          }
+
+          // Otherwise it is a media segment (e.g. .ts, .m4s, .txt from GoldenAnchor/Megaplay)
+          isExpectingSegment = false;
+          const rawParam = segmentsEncrypted ? "&raw=1" : "";
           if (isFlixcloudStream) {
-            rewrittenLines.push(`/api/proxy/ts?url=${encodeURIComponent(abs)}${aidParam}${vParam}${qParam}${epParam}${srvParam}`);
+            rewrittenLines.push(`/api/proxy/ts?url=${encodeURIComponent(abs)}${aidParam}${vParam}${qParam}${epParam}${srvParam}${audioParam}${refParam}${origParam}${rawParam}`);
           } else {
-            const refParam = effectiveReferer ? `&referer=${encodeURIComponent(effectiveReferer)}` : "";
-            const origParam = effectiveOrigin ? `&origin=${encodeURIComponent(effectiveOrigin)}` : "";
-            const uaParam = ua ? `&ua=${encodeURIComponent(ua)}` : "";
-            rewrittenLines.push(`/api/proxy/segment?url=${encodeURIComponent(abs)}${refParam}${origParam}${uaParam}`);
+            rewrittenLines.push(`/api/proxy/segment?url=${encodeURIComponent(abs)}${refParam}${origParam}${uaParam}${rawParam}`);
           }
           continue;
         }

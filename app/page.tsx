@@ -51,24 +51,20 @@ const AUDIO_OPTIONS = [
 ];
 
 const SERVER_OPTIONS = [
-  { id: "flow", name: "Flow 1" },
-  { id: "flow2", name: "Flow 2" },
-  { id: "animeparadise", name: "AnimeParadise" },
-  { id: "kaido", name: "Kaido" },
-  { id: "kaa", name: "Kaa", subOnly: true },
-  { id: "hianime", name: "HiAnime" },
-  { id: "gogoanime", name: "Gogoanime" },
+  { id: "flow", name: "Flow" },
+  { id: "kitty", name: "Kitty" },
   { id: "yuri", name: "Yuri" },
   { id: "zuri", name: "Zuri", subOnly: true },
+  { id: "buzz", name: "Buzz" },
 ];
 
 const ARCHITECTURE_FEATURES = [
   {
     icon: Server,
     title: "Multi-Server Routing",
-    desc: "Automated failover between Flow 1, Flow 2, Yuri, and Zuri stream engines for uninterrupted playback.",
+    desc: "Automated failover between Flow, Kitty, Yuri, Zuri, and Buzz stream engines for uninterrupted playback.",
     key: "failover.engine",
-    value: "4 active mirrors",
+    value: "5 active mirrors",
     valueColor: "text-emerald-400",
   },
   {
@@ -124,7 +120,7 @@ const FAQS = [
   },
   {
     q: "How does the multi-server stream route engine work?",
-    a: "AniFlow integrates 4 independent streaming providers: Flow 1 (our high-speed primary engine), Flow 2 (resilient backup mirror), Yuri (specialized anime stream extractor), and Zuri (dedicated subbed catalog). Users can manually switch servers inside the player, or the API will automatically failover if an upstream source is down.",
+    a: "AniFlow integrates independent streaming providers: Flow & Kitty (our high-speed primary engines), Yuri (specialized anime stream extractor), Zuri (dedicated subbed catalog), and Buzz (Megaplay proxy engine). Users can manually switch servers inside the player, or the API will automatically failover if an upstream source is down.",
   },
   {
     q: "How does automatic intro and outro skipping work with AniSkip?",
@@ -175,6 +171,16 @@ export default function HomePage() {
       };
     }
   }, [openDropdown]);
+
+  // Ensure sub-only servers (like Zuri) are never selected when in Dub mode
+  useEffect(() => {
+    if (audio === "dub") {
+      const cur = SERVER_OPTIONS.find((o) => o.id === server);
+      if (cur?.subOnly) {
+        setServer("flow");
+      }
+    }
+  }, [audio, server]);
 
   // Documentation state
   const [activeDocTab, setActiveDocTab] = useState<DocTab>("endpoints");
@@ -628,7 +634,7 @@ export default function HomePage() {
                     )}
                   >
                     <span className="truncate">
-                      {SERVER_OPTIONS.find((o) => o.id === server)?.name || "Flow 1"}
+                      {SERVER_OPTIONS.find((o) => o.id === server)?.name || "Flow"}
                     </span>
                     <ChevronDown
                       className={cn(
@@ -652,37 +658,30 @@ export default function HomePage() {
                         }}
                         className="absolute top-full mt-1.5 left-0 right-0 rounded-xl border border-white/[0.1] p-1 shadow-2xl shadow-black/90 z-50 font-product-sans max-h-72 overflow-y-auto player-menu-scrollbar origin-top"
                       >
-                        {SERVER_OPTIONS.map((opt) => {
-                          const isSelected = server === opt.id;
-                          const isDisabled = opt.subOnly && audio === "dub";
-                          return (
-                            <button
-                              key={opt.id}
-                              type="button"
-                              disabled={isDisabled}
-                              onClick={() => {
-                                if (isDisabled) return;
-                                setServer(opt.id);
-                                setOpenDropdown(null);
-                              }}
-                              className={cn(
-                                "w-full flex items-center justify-between gap-2.5 px-3 py-2 text-xs rounded-lg font-medium font-product-sans transition-colors cursor-pointer",
-                                isDisabled && "opacity-35 cursor-not-allowed hover:bg-transparent pointer-events-none",
-                                isSelected
-                                  ? "bg-white/[0.08] text-white"
-                                  : !isDisabled && "text-zinc-400 hover:text-white hover:bg-white/[0.04]"
-                              )}
-                            >
-                              <div className="flex items-center gap-2 min-w-0">
-                                <span className="truncate">{opt.name}</span>
-                                {opt.subOnly && (
-                                  <span className="text-[10px] font-mono text-zinc-500">Sub</span>
+                        {SERVER_OPTIONS
+                          .filter((opt) => !(opt.subOnly && audio === "dub"))
+                          .map((opt) => {
+                            const isSelected = server === opt.id;
+                            return (
+                              <button
+                                key={opt.id}
+                                type="button"
+                                onClick={() => {
+                                  setServer(opt.id);
+                                  setOpenDropdown(null);
+                                }}
+                                className={cn(
+                                  "w-full flex items-center justify-between gap-2.5 px-3 py-2 text-xs rounded-lg font-medium font-product-sans transition-colors cursor-pointer",
+                                  isSelected
+                                    ? "bg-white/[0.08] text-white"
+                                    : "text-zinc-400 hover:text-white hover:bg-white/[0.04]"
                                 )}
-                              </div>
-                              {isSelected && <Check className="w-3.5 h-3.5 text-white shrink-0" />}
-                            </button>
-                          );
-                        })}
+                              >
+                                <span className="truncate">{opt.name}</span>
+                                {isSelected && <Check className="w-3.5 h-3.5 text-white shrink-0" />}
+                              </button>
+                            );
+                          })}
                       </motion.div>
                     )}
                   </AnimatePresence>
@@ -1022,7 +1021,7 @@ export default function HomePage() {
                       {/* Content / Info */}
                       <div className="p-4 space-y-3.5 text-xs flex-1 flex flex-col justify-between">
                         <p className="text-zinc-400 leading-relaxed">
-                          Direct lookup using MyAnimeList anime ID. Compatible with all stream providers (Flow 1, Flow 2, Yuri, Zuri) and audio languages.
+                          Direct lookup using MyAnimeList anime ID. Compatible with all stream providers (Flow, Kitty, Yuri, Zuri, Buzz) and audio languages.
                         </p>
 
                         <div className="space-y-1.5 font-mono text-xs pt-3 border-t border-white/[0.06]">
@@ -1194,13 +1193,13 @@ export default function HomePage() {
                           server
                         </td>
                         <td className="py-2.5 pr-4 sm:pr-6 font-mono text-zinc-400 whitespace-nowrap">
-                          flow1 · flow2 · yuri · zuri
+                          flow · kitty · yuri · zuri · buzz
                         </td>
                         <td className="py-2.5 pr-4 sm:pr-6 font-mono text-zinc-400 whitespace-nowrap">
-                          flow1
+                          flow
                         </td>
                         <td className="py-2.5 text-zinc-300 font-sans leading-relaxed">
-                          Selects initial stream provider. Flow 1, Flow 2, Yuri support Sub &amp; Dub. Zuri (zuna) is strictly Sub only.
+                          Selects initial stream provider. Flow, Kitty, Yuri, and Buzz support Sub &amp; Dub. Zuri is strictly Sub only.
                         </td>
                       </tr>
                       <tr className="hover:bg-white/[0.015] transition-colors">
@@ -1587,10 +1586,11 @@ export default function HomePage() {
                   {[
                     { name: "Edge CDN", role: "Media delivery", status: "Operational" },
                     { name: "API", role: "Resolve & embed", status: "Operational" },
-                    { name: "Flow 1", role: "Stream server", status: "Operational" },
-                    { name: "Flow 2", role: "Stream server", status: "Operational" },
+                    { name: "Flow", role: "Stream server", status: "Operational" },
+                    { name: "Kitty", role: "Stream server", status: "Operational" },
                     { name: "Yuri", role: "Stream server", status: "Operational" },
                     { name: "Zuri", role: "Stream server", status: "Operational" },
+                    { name: "Buzz", role: "Stream server", status: "Operational" },
                   ].map((row, idx) => (
                     <tr
                       key={idx}

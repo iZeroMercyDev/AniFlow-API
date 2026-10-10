@@ -126,6 +126,13 @@ export async function GET(request: NextRequest) {
         effectiveReferer = "https://rabbitstream.net/";
       } else if (targetUrl.includes("flixcloud") || targetUrl.includes("coolapi")) {
         effectiveReferer = "https://flixcloud.cc/";
+      } else if (
+        targetUrl.includes("megaplay") ||
+        targetUrl.includes("broforgotsave") ||
+        targetUrl.includes("eclipseharbor") ||
+        targetUrl.includes("nexabloom")
+      ) {
+        effectiveReferer = "https://megaplay.buzz/";
       } else {
         try {
           effectiveReferer = new URL(targetUrl).origin + "/";

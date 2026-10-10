@@ -22,7 +22,7 @@ export function EmbedPageClient({
   const searchParams = useSearchParams();
 
   // Query parameter overrides
-  const server = searchParams.get("server") || "flow";
+  let server = searchParams.get("server") || "flow";
   const startAtRaw = searchParams.get("startAt") || searchParams.get("progress") || "0";
   const startAt = parseFloat(startAtRaw) || 0;
   const parentHost = searchParams.get("parentHost") || null;
@@ -38,6 +38,10 @@ export function EmbedPageClient({
   // Check query audio override if present
   const queryAudio = searchParams.get("audio");
   const effectiveAudio = (queryAudio === "dub" || propAudio === "dub" ? "dub" : "sub") as "sub" | "dub";
+
+  if (effectiveAudio === "dub" && (server === "zuri" || server === "zuna")) {
+    server = "flow";
+  }
 
   const effectiveAnilistId = propAnilistId
     ? propAnilistId
