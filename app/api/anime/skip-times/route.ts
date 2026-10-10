@@ -64,6 +64,7 @@ export async function GET(request: NextRequest) {
           anilistId: animeIdParam,
           query: title,
           episode: episodeNumber,
+          server: serverParam,
         });
 
         if (reanimeData && (reanimeData.intro || reanimeData.outro)) {
@@ -125,15 +126,27 @@ export async function GET(request: NextRequest) {
           ? { start: Math.round(ed.interval.startTime), end: Math.round(ed.interval.endTime) }
           : null;
 
+        const refDuration = skipData.meta?.refDuration || 1440;
+        let effectiveIntro = rawIntro;
+        let effectiveOutro = rawOutro;
+        let adapted = false;
+
+        if (!isExplicitNonFlow && duration > 0) {
+          const adaptedResult = adaptSkipTimes(rawIntro, rawOutro, refDuration, duration);
+          effectiveIntro = adaptedResult.intro;
+          effectiveOutro = adaptedResult.outro;
+          adapted = adaptedResult.adapted;
+        }
+
         return NextResponse.json(
           {
-            intro: rawIntro,
-            outro: rawOutro,
+            intro: effectiveIntro,
+            outro: effectiveOutro,
             rawIntro,
             rawOutro,
-            refDuration: skipData.meta?.refDuration || 1440,
+            refDuration,
             actualDuration: duration > 0 ? duration : null,
-            adapted: false,
+            adapted,
             found: true,
             source: "aniskip",
             results: skipData.results,

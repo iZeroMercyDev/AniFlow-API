@@ -581,24 +581,45 @@ export async function extractFlixSkipTimes(
 
   const embedUrl = `https://flixcloud.cc/e/${cleanAccessId}?v=${version}`;
   let html = "";
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    // 1. Try with got-scraping first (bypasses Cloudflare on flixcloud.cc, matching decryptFlixStream)
+    try {
+      const got = await getGotScraping();
+      if (got) {
+        const res = await got.get(embedUrl, {
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            Referer: BASE_URL,
+          },
+          timeout: { request: 6000 },
+        });
+        if (res.body && typeof res.body === "string" && (res.body.includes("data:") || res.body.includes("chapters"))) {
+          html = res.body;
+          break;
+        }
+      }
+    } catch {}
+
+    // 2. Fallback to axios
     try {
       const res = await axios.get(embedUrl, {
-        timeout: 8000,
+        timeout: 6000,
         headers: {
           "User-Agent":
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
           Referer: BASE_URL,
         },
       });
-      if (res.data && typeof res.data === "string") {
+      if (res.data && typeof res.data === "string" && (res.data.includes("data:") || res.data.includes("chapters"))) {
         html = res.data;
         break;
       }
     } catch {
+      // 3. Fallback to fetch
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000);
+        const timeoutId = setTimeout(() => controller.abort(), 6000);
         const fRes = await fetch(embedUrl, {
           signal: controller.signal,
           headers: {
@@ -609,11 +630,15 @@ export async function extractFlixSkipTimes(
         });
         clearTimeout(timeoutId);
         if (fRes.ok) {
-          html = await fRes.text();
-          if (html) break;
+          const text = await fRes.text();
+          if (text && (text.includes("data:") || text.includes("chapters"))) {
+            html = text;
+            break;
+          }
         }
       } catch {}
     }
+    if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 150));
   }
 
   if (!html) {
@@ -656,12 +681,14 @@ export async function getReanimeSkipTimes({
   episode = 1,
   accessId,
   version = 1,
+  server = null,
 }: {
   anilistId?: number | string | null;
   query?: string | null;
   episode?: number | string;
   accessId?: string | null;
   version?: number;
+  server?: string | null;
 }): Promise<{
   intro: { start: number; end: number } | null;
   outro: { start: number; end: number } | null;
@@ -679,13 +706,47 @@ export async function getReanimeSkipTimes({
 
   try {
     const srvData = await getReanimeServers(target, episode);
-    const servers = srvData?.servers || [];
-    const validServer = servers.find((s: any) => s.access_id);
-    if (!validServer?.access_id) {
+    const servers: any[] = srvData?.servers || [];
+    if (servers.length === 0) {
       return { intro: null, outro: null, chapters: [], refDuration: 1440 };
     }
 
-    return await extractFlixSkipTimes(validServer.access_id, validServer.version || 1);
+    // Order candidate servers: prioritize requested server if specified
+    const orderedServers = [...servers];
+    if (server) {
+      const srvNorm = server.toLowerCase().replace(/[\s-_]+/g, "");
+      const isKitty = srvNorm.includes("kitty") || srvNorm.includes("hd2") || srvNorm.includes("flow2");
+      orderedServers.sort((a, b) => {
+        const aName = (a.serverName || "").toLowerCase().replace(/[\s-_]+/g, "");
+        const bName = (b.serverName || "").toLowerCase().replace(/[\s-_]+/g, "");
+        const aMatch = isKitty ? (aName.includes("hd2") || aName.includes("kitty")) : (aName.includes("hd1") || aName.includes("flow"));
+        const bMatch = isKitty ? (bName.includes("hd2") || bName.includes("kitty")) : (bName.includes("hd1") || bName.includes("flow"));
+        if (aMatch && !bMatch) return -1;
+        if (!aMatch && bMatch) return 1;
+        return 0;
+      });
+    }
+
+    // Try valid servers in order; if one returns chapters or intro/outro, return it!
+    let fallbackResult: {
+      intro: { start: number; end: number } | null;
+      outro: { start: number; end: number } | null;
+      chapters: Array<{ start: number; end?: number; title: string }>;
+      refDuration: number;
+    } = { intro: null, outro: null, chapters: [], refDuration: 1440 };
+    for (const s of orderedServers) {
+      if (s.access_id) {
+        const times = await extractFlixSkipTimes(s.access_id, s.version || 1);
+        if (times.intro || times.outro || (times.chapters && times.chapters.length > 0)) {
+          return times;
+        }
+        if (!fallbackResult.intro && !fallbackResult.outro && times.refDuration) {
+          fallbackResult = times;
+        }
+      }
+    }
+
+    return fallbackResult;
   } catch (err: any) {
     console.warn("[getReanimeSkipTimes] Error:", err?.message || err);
     return { intro: null, outro: null, chapters: [], refDuration: 1440 };
@@ -1218,6 +1279,7 @@ export interface ReanimeServerInfo {
   intro?: { start: number; end: number } | null;
   outro?: { start: number; end: number } | null;
   chapters?: Array<{ start: number; end?: number; title: string }>;
+  refDuration?: number;
   subtitles?: Array<{
     language: string;
     label?: string;
@@ -1543,11 +1605,29 @@ export async function findAndStream({
     hls: streamInfo.hls,
     pk: streamInfo.pk,
     subtitles: streamInfo.subtitles || [],
-    intro: streamInfo?.intro || null,
-    outro: streamInfo?.outro || null,
-    chapters: streamInfo?.chapters || [],
-    refDuration: streamInfo?.refDuration || (streamInfo?.chapters?.length && streamInfo.chapters[streamInfo.chapters.length - 1]?.end ? streamInfo.chapters[streamInfo.chapters.length - 1].end : 1440),
-    all_servers: isAllServers ? allDecrypted : null,
+    intro: streamInfo?.intro || allDecrypted.find((s) => s.intro)?.intro || null,
+    outro: streamInfo?.outro || allDecrypted.find((s) => s.outro)?.outro || null,
+    chapters: (streamInfo?.chapters && streamInfo.chapters.length > 0)
+      ? streamInfo.chapters
+      : (allDecrypted.find((s) => s.chapters?.length)?.chapters || []),
+    refDuration: streamInfo?.refDuration || allDecrypted.find((s) => s.refDuration)?.refDuration || (streamInfo?.chapters?.length && streamInfo.chapters[streamInfo.chapters.length - 1]?.end ? streamInfo.chapters[streamInfo.chapters.length - 1].end : 1440),
+    all_servers: isAllServers && allDecrypted.length > 0
+      ? (() => {
+          const sharedIntro = streamInfo?.intro || allDecrypted.find((s) => s.intro)?.intro || null;
+          const sharedOutro = streamInfo?.outro || allDecrypted.find((s) => s.outro)?.outro || null;
+          const sharedChapters = (streamInfo?.chapters && streamInfo.chapters.length > 0)
+            ? streamInfo.chapters
+            : (allDecrypted.find((s) => s.chapters?.length)?.chapters || []);
+          const sharedRefDuration = streamInfo?.refDuration || allDecrypted.find((s) => s.refDuration)?.refDuration || 1440;
+          return allDecrypted.map((s) => ({
+            ...s,
+            intro: s.intro || sharedIntro,
+            outro: s.outro || sharedOutro,
+            chapters: (s.chapters && s.chapters.length > 0) ? s.chapters : sharedChapters,
+            refDuration: s.refDuration || sharedRefDuration,
+          }));
+        })()
+      : (isAllServers ? allDecrypted : null),
     available_servers: srvData.servers.map((s: any) => ({
       server: s.serverName,
       audio: s.dataType,

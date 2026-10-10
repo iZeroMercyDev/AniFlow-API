@@ -228,7 +228,8 @@ export function EmbedPlayer({
   useEffect(() => {
     if (!rawSkipTimes.intro && !rawSkipTimes.outro) return;
     const isFlowSource = rawSkipTimes.source?.includes("flow") || rawSkipTimes.source?.includes("reanime");
-    if (isFlowSource && duration > 0) {
+    const isFlowSrv = server.toLowerCase().includes("flow") || server.toLowerCase().includes("kitty");
+    if ((isFlowSource || isFlowSrv) && duration > 0) {
       const adapted = adaptSkipTimes(
         rawSkipTimes.intro,
         rawSkipTimes.outro,
@@ -239,7 +240,7 @@ export function EmbedPlayer({
     } else {
       setSkipTimes({ intro: rawSkipTimes.intro, outro: rawSkipTimes.outro });
     }
-  }, [duration, rawSkipTimes]);
+  }, [duration, rawSkipTimes, server]);
 
   // Timeline hover
   const [hoverTime, setHoverTime] = useState<number | null>(null);
@@ -399,9 +400,13 @@ export function EmbedPlayer({
         const titleParam = animeTitle ? `&title=${encodeURIComponent(animeTitle)}` : "";
         const srvParam = `&server=${encodeURIComponent(server)}`;
         const isFlowSrv = server.toLowerCase().includes("flow") || server.toLowerCase().includes("kitty");
+        const currentDur = (videoRef.current && videoRef.current.duration > 0)
+          ? videoRef.current.duration
+          : duration;
+        const durParam = currentDur > 0 ? `&duration=${Math.round(currentDur)}` : "";
 
         // 1. Fetch skip times specifically for current server
-        const res = await fetch(`/api/anime/skip-times?${idParam}&episode=${episodeNumber}${titleParam}${srvParam}`);
+        const res = await fetch(`/api/anime/skip-times?${idParam}&episode=${episodeNumber}${titleParam}${srvParam}${durParam}`);
         if (res.ok && !cancelled) {
           const data = await res.json();
           if (data.found && (data.intro || data.outro || data.rawIntro || data.rawOutro)) {
@@ -409,17 +414,31 @@ export function EmbedPlayer({
             const rawOut = data.rawOutro || data.outro || null;
             const refDur = data.refDuration || 1440;
             const srcType = data.source || (isFlowSrv ? "flow-reanime" : "aniskip");
-            setRawSkipTimes({
-              intro: rawIn,
-              outro: rawOut,
-              refDuration: refDur,
-              source: srcType,
+
+            setRawSkipTimes((prev) => {
+              // Never downgrade verified Reanime chapters with generic aniskip
+              if (prev.source === "flow-reanime" && srcType === "aniskip" && (prev.intro || prev.outro)) {
+                return prev;
+              }
+              return {
+                intro: rawIn,
+                outro: rawOut,
+                refDuration: refDur,
+                source: srcType,
+              };
             });
-            if (isFlowSrv && duration > 0) {
-              const adapted = adaptSkipTimes(rawIn, rawOut, refDur, duration);
-              setSkipTimes({ intro: adapted.intro, outro: adapted.outro });
+
+            if (isFlowSrv && currentDur > 0) {
+              const adapted = adaptSkipTimes(rawIn, rawOut, refDur, currentDur);
+              setSkipTimes((prev) => {
+                if (data.source === "aniskip" && prev.intro && isFlowSrv) return prev;
+                return { intro: adapted.intro, outro: adapted.outro };
+              });
             } else {
-              setSkipTimes({ intro: data.intro || rawIn, outro: data.outro || rawOut });
+              setSkipTimes((prev) => {
+                if (data.source === "aniskip" && prev.intro && isFlowSrv) return prev;
+                return { intro: data.intro || rawIn, outro: data.outro || rawOut };
+              });
             }
             return;
           }
@@ -427,7 +446,6 @@ export function EmbedPlayer({
 
         // 2. Direct fallback to flow-skip-times ONLY on Flow/Kitty servers
         if (isFlowSrv) {
-          const durParam = duration > 0 ? `&duration=${Math.round(duration)}` : "";
           const flowRes = await fetch(`/api/anime/flow-skip-times?${idParam}&episode=${episodeNumber}${durParam}${titleParam}`);
           if (flowRes.ok && !cancelled) {
             const flowData = await flowRes.json();
@@ -441,8 +459,8 @@ export function EmbedPlayer({
                 refDuration: refDur,
                 source: "flow-reanime",
               });
-              if (duration > 0) {
-                const adapted = adaptSkipTimes(rawIn, rawOut, refDur, duration);
+              if (currentDur > 0) {
+                const adapted = adaptSkipTimes(rawIn, rawOut, refDur, currentDur);
                 setSkipTimes({ intro: adapted.intro, outro: adapted.outro });
               } else {
                 setSkipTimes({ intro: flowData.intro || rawIn, outro: flowData.outro || rawOut });
@@ -506,11 +524,56 @@ export function EmbedPlayer({
           return { ...s, videoUrl: u };
         });
 
+        // Find if ANY Reanime source in incoming has chapters/skip times
+        const reanimeCandidate = cleanedIncoming.find(
+          (s) =>
+            (s.id?.includes("flow") ||
+              s.id?.includes("kitty") ||
+              s.serverName?.toLowerCase().includes("flow") ||
+              s.serverName?.toLowerCase().includes("kitty") ||
+              s.serverName?.toLowerCase().includes("hd")) &&
+            (s.intro || s.outro || (s.chapters && s.chapters.length > 0))
+        );
+
+        let apiIntro: { start: number; end: number } | null = data.intro || reanimeCandidate?.intro || null;
+        let apiOutro: { start: number; end: number } | null = data.outro || reanimeCandidate?.outro || null;
+        let apiChapters = (Array.isArray(data.chapters) && data.chapters.length > 0)
+          ? data.chapters
+          : (reanimeCandidate?.chapters || []);
+        let apiRefDuration = data.refDuration || reanimeCandidate?.refDuration || 1440;
+
+        if (!apiIntro && !apiOutro && Array.isArray(apiChapters) && apiChapters.length > 0) {
+          const introChap = apiChapters.find((c: any) => c.title?.toLowerCase().includes("intro") || c.title?.toLowerCase().includes("op") || c.title?.toLowerCase().includes("opening"));
+          const outroChap = apiChapters.find((c: any) => c.title?.toLowerCase().includes("outro") || c.title?.toLowerCase().includes("ed") || c.title?.toLowerCase().includes("ending"));
+          if (introChap) apiIntro = { start: introChap.start, end: introChap.end };
+          if (outroChap) apiOutro = { start: outroChap.start, end: outroChap.end };
+        }
+
+        // Enrich all Reanime sources so both Flow and Kitty servers share the exact same skip times right away
+        const enrichedIncoming = cleanedIncoming.map((s) => {
+          const isRe = s.id?.includes("flow") || s.id?.includes("kitty") || s.serverName?.toLowerCase().includes("flow") || s.serverName?.toLowerCase().includes("kitty") || s.serverName?.toLowerCase().includes("hd");
+          if (isRe) {
+            return {
+              ...s,
+              intro: s.intro || apiIntro,
+              outro: s.outro || apiOutro,
+              chapters: (s.chapters && s.chapters.length > 0) ? s.chapters : apiChapters,
+              refDuration: s.refDuration || apiRefDuration,
+            };
+          }
+          return s;
+        });
+
         // Merge discovered streams with standard fallback routes
-        const allAvailableSources: VideoSourceData[] = [...cleanedIncoming];
+        const allAvailableSources: VideoSourceData[] = [...enrichedIncoming];
         for (const fp of standardFallbackProviders) {
           if (!allAvailableSources.some((s) => s.id === fp.id)) {
-            allAvailableSources.push(fp);
+            const isRe = fp.id.includes("flow") || fp.id.includes("kitty");
+            allAvailableSources.push(
+              isRe
+                ? { ...fp, intro: apiIntro, outro: apiOutro, chapters: apiChapters, refDuration: apiRefDuration }
+                : fp
+            );
           }
         }
         setSources(allAvailableSources);
@@ -557,27 +620,19 @@ export function EmbedPlayer({
           setStreamUrl(initialStream);
         }
 
-        // Extract Re:ANIME chapters or explicit intro/outro from /api/play
-        let apiIntro: { start: number; end: number } | null = data.intro || null;
-        let apiOutro: { start: number; end: number } | null = data.outro || null;
-        if (!apiIntro && !apiOutro && Array.isArray(data.chapters) && data.chapters.length > 0) {
-          const introChap = data.chapters.find((c: any) => c.title?.toLowerCase().includes("intro") || c.title?.toLowerCase().includes("op") || c.title?.toLowerCase().includes("opening"));
-          const outroChap = data.chapters.find((c: any) => c.title?.toLowerCase().includes("outro") || c.title?.toLowerCase().includes("ed") || c.title?.toLowerCase().includes("ending"));
-          if (introChap) apiIntro = { start: introChap.start, end: introChap.end };
-          if (outroChap) apiOutro = { start: outroChap.start, end: outroChap.end };
-        }
-
-        const isFlowData = data.server?.toLowerCase().includes("flow") || data.server?.toLowerCase().includes("kitty") || data.server?.toLowerCase().includes("hd");
+        // Apply skip times from Re:ANIME
+        const isFlowData = data.server?.toLowerCase().includes("flow") || data.server?.toLowerCase().includes("kitty") || data.server?.toLowerCase().includes("hd") || Boolean(reanimeCandidate);
         if (apiIntro || apiOutro) {
-          const refDur = data.refDuration || 1440;
+          const refDur = apiRefDuration;
           setRawSkipTimes({
             intro: apiIntro,
             outro: apiOutro,
             refDuration: refDur,
             source: isFlowData ? "flow-reanime" : "aniskip",
           });
-          if (isFlowData && duration > 0) {
-            const adapted = adaptSkipTimes(apiIntro, apiOutro, refDur, duration);
+          const curDur = (videoRef.current && videoRef.current.duration > 0) ? videoRef.current.duration : duration;
+          if (isFlowData && curDur > 0) {
+            const adapted = adaptSkipTimes(apiIntro, apiOutro, refDur, curDur);
             setSkipTimes({ intro: adapted.intro, outro: adapted.outro });
           } else {
             setSkipTimes({ intro: apiIntro, outro: apiOutro });
@@ -918,6 +973,9 @@ export function EmbedPlayer({
     const current = video.currentTime;
     const dur = video.duration || 0;
     setCurrentTime(current);
+    if (dur > 0 && duration === 0) {
+      setDuration(dur);
+    }
 
     if (dur > 0 && video.buffered.length > 0) {
       for (let i = 0; i < video.buffered.length; i++) {
@@ -2098,7 +2156,32 @@ export function EmbedPlayer({
         }}
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={() => {
-          if (videoRef.current) setDuration(videoRef.current.duration);
+          if (videoRef.current) {
+            const dur = videoRef.current.duration;
+            setDuration(dur);
+            if (rawSkipTimes.intro || rawSkipTimes.outro) {
+              const isFlowSrv = server.toLowerCase().includes("flow") || server.toLowerCase().includes("kitty");
+              const isFlowSource = rawSkipTimes.source?.includes("flow") || rawSkipTimes.source?.includes("reanime");
+              if ((isFlowSource || isFlowSrv) && dur > 0) {
+                const adapted = adaptSkipTimes(rawSkipTimes.intro, rawSkipTimes.outro, rawSkipTimes.refDuration, dur);
+                setSkipTimes({ intro: adapted.intro, outro: adapted.outro });
+              }
+            }
+          }
+        }}
+        onDurationChange={() => {
+          if (videoRef.current && videoRef.current.duration > 0) {
+            const dur = videoRef.current.duration;
+            setDuration(dur);
+            if (rawSkipTimes.intro || rawSkipTimes.outro) {
+              const isFlowSrv = server.toLowerCase().includes("flow") || server.toLowerCase().includes("kitty");
+              const isFlowSource = rawSkipTimes.source?.includes("flow") || rawSkipTimes.source?.includes("reanime");
+              if ((isFlowSource || isFlowSrv) && dur > 0) {
+                const adapted = adaptSkipTimes(rawSkipTimes.intro, rawSkipTimes.outro, rawSkipTimes.refDuration, dur);
+                setSkipTimes({ intro: adapted.intro, outro: adapted.outro });
+              }
+            }
+          }
         }}
         onCanPlay={() => setIsLoading(false)}
         onCanPlayThrough={() => setIsLoading(false)}

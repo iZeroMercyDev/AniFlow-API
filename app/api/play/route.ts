@@ -445,6 +445,13 @@ export async function GET(request: NextRequest) {
 
       const allServersFormatted: any[] = [];
 
+      const anyFlowIntro = flowData?.intro || (flowData?.all_servers || []).find((s: any) => s.intro)?.intro || null;
+      const anyFlowOutro = flowData?.outro || (flowData?.all_servers || []).find((s: any) => s.outro)?.outro || null;
+      const anyFlowChapters = (flowData?.chapters && flowData.chapters.length > 0)
+        ? flowData.chapters
+        : ((flowData?.all_servers || []).find((s: any) => s.chapters?.length)?.chapters || []);
+      const anyFlowRefDur = flowData?.refDuration || (flowData?.all_servers || []).find((s: any) => s.refDuration)?.refDuration || 1440;
+
       // Handle Buzz if requested
       if (isBuzzParam) {
         resolvedServerName = "Buzz";
@@ -503,10 +510,10 @@ export async function GET(request: NextRequest) {
             quality: "1080p",
             isHls: true,
             subtitles: (s.subtitles && s.subtitles.length > 0) ? s.subtitles : (flowData.subtitles || []),
-            intro: flowData.intro || null,
-            outro: flowData.outro || null,
-            chapters: flowData.chapters || [],
-            refDuration: flowData.refDuration || 1440,
+            intro: s.intro || anyFlowIntro || null,
+            outro: s.outro || anyFlowOutro || null,
+            chapters: (s.chapters && s.chapters.length > 0) ? s.chapters : anyFlowChapters,
+            refDuration: s.refDuration || anyFlowRefDur || 1440,
           };
         });
         allServersFormatted.push(...flowServers);
@@ -540,10 +547,10 @@ export async function GET(request: NextRequest) {
             m3u8: proxyM3u8,
             fullM3u8: `${baseUrl}${proxyM3u8}`,
             subtitles: subsFormatted,
-            intro: flowData.intro || null,
-            outro: flowData.outro || null,
-            chapters: flowData.chapters || [],
-            refDuration: flowData.refDuration || 1440,
+            intro: flowData.intro || anyFlowIntro || null,
+            outro: flowData.outro || anyFlowOutro || null,
+            chapters: (flowData.chapters && flowData.chapters.length > 0) ? flowData.chapters : anyFlowChapters,
+            refDuration: flowData.refDuration || anyFlowRefDur || 1440,
             allServers: allServersFormatted,
             hasDub: flowHasDub,
             hasSub: flowData.has_sub,
@@ -659,10 +666,10 @@ export async function GET(request: NextRequest) {
             quality: "1080p",
             isHls: true,
             subtitles: [],
-            intro: (isFlowProv || isKittyProv) ? (flowData?.intro || null) : aniSkipIntro,
-            outro: (isFlowProv || isKittyProv) ? (flowData?.outro || null) : aniSkipOutro,
-            chapters: (isFlowProv || isKittyProv) ? (flowData?.chapters || []) : [],
-            refDuration: (isFlowProv || isKittyProv) ? (flowData?.refDuration || 1440) : 1440,
+            intro: (isFlowProv || isKittyProv) ? (anyFlowIntro || flowData?.intro || null) : aniSkipIntro,
+            outro: (isFlowProv || isKittyProv) ? (anyFlowOutro || flowData?.outro || null) : aniSkipOutro,
+            chapters: (isFlowProv || isKittyProv) ? (anyFlowChapters || flowData?.chapters || []) : [],
+            refDuration: (isFlowProv || isKittyProv) ? (anyFlowRefDur || flowData?.refDuration || 1440) : 1440,
           });
         }
 
@@ -690,10 +697,10 @@ export async function GET(request: NextRequest) {
               quality: "1080p",
               isHls: true,
               subtitles: [],
-              intro: (isFlowProv || isKittyProv) ? (flowData?.intro || null) : aniSkipIntro,
-              outro: (isFlowProv || isKittyProv) ? (flowData?.outro || null) : aniSkipOutro,
-              chapters: (isFlowProv || isKittyProv) ? (flowData?.chapters || []) : [],
-              refDuration: (isFlowProv || isKittyProv) ? (flowData?.refDuration || 1440) : 1440,
+              intro: (isFlowProv || isKittyProv) ? (anyFlowIntro || flowData?.intro || null) : aniSkipIntro,
+              outro: (isFlowProv || isKittyProv) ? (anyFlowOutro || flowData?.outro || null) : aniSkipOutro,
+              chapters: (isFlowProv || isKittyProv) ? (anyFlowChapters || flowData?.chapters || []) : [],
+              refDuration: (isFlowProv || isKittyProv) ? (anyFlowRefDur || flowData?.refDuration || 1440) : 1440,
             });
           }
         }
@@ -769,13 +776,13 @@ export async function GET(request: NextRequest) {
             resolvedServerName = matchingRequested.server || matchingRequested.name;
             const isResolvedFlow = resolvedServerName.toLowerCase().includes("flow") || resolvedServerName.toLowerCase().includes("kitty") || resolvedServerName.toLowerCase().includes("hd");
             const serverIntro = isResolvedFlow
-              ? (matchingRequested.intro || (flowData?.intro || null))
+              ? (matchingRequested.intro || anyFlowIntro || flowData?.intro || aniSkipIntro)
               : (matchingRequested.intro || aniSkipIntro);
             const serverOutro = isResolvedFlow
-              ? (matchingRequested.outro || (flowData?.outro || null))
+              ? (matchingRequested.outro || anyFlowOutro || flowData?.outro || aniSkipOutro)
               : (matchingRequested.outro || aniSkipOutro);
             const serverChapters = isResolvedFlow
-              ? (matchingRequested.chapters || (flowData?.chapters || []))
+              ? (matchingRequested.chapters || anyFlowChapters || flowData?.chapters || [])
               : [];
 
             // Preserve resolved subtitles if already fetched, or fallback to matchingRequested
