@@ -29,8 +29,9 @@
 
 Built for speed, reliability, and visual polish, AniFlow features:
 - **5-Server Redundant Architecture** (`Flow`, `Kitty`, `Yuri`, `Zuri`, `Buzz`).
+- **Direct HLS `.m3u8` Stream API**: Stream directly to VLC, mpv, ExoPlayer, AVPlayer, or HTML5 `<video>` via `/meu8/ani/...` and `/meu8/mal/...`.
 - **Strict Dub Verification**: Eliminates silent Japanese fallbacks on English dub streams.
-- **Dual ID Resolution**: Works seamlessly with both **AniList** (`/embed/ani/...`) and **MyAnimeList** (`/embed/mal/...`) IDs.
+- **Dual ID Resolution**: Works seamlessly with both **AniList** (`/embed/ani/...`, `/meu8/ani/...`) and **MyAnimeList** (`/embed/mal/...`, `/meu8/mal/...`) IDs.
 - **Adaptive Skip-Times Engine**: Dual-source OP/ED markers via Re:ANIME & AniSkip APIs with duration compensation.
 - **Resilient Multilingual Subtitle Proxy**: Seamless track persistence across server switching.
 - **Liquid Glass Dark Minimalist Player**: Crafted with the unified `shad-renew` aesthetic.
@@ -116,7 +117,48 @@ GET /embed/mal/{malId}/{episode}/{audio}?server={server}
 
 ---
 
-### 2. REST API Endpoints
+### 2. Direct HLS M3U8 Stream API (`/meu8/...`)
+
+Stream anime directly into native HTML5 `<video>` tags, mobile apps (iOS AVPlayer, Android ExoPlayer), VLC, or mpv without using an iframe:
+
+#### AniList M3U8 Pattern:
+```http
+GET /meu8/ani/{anilistId}/{episode}/{audio}?server={server}
+```
+
+#### MyAnimeList (MAL) M3U8 Pattern:
+```http
+GET /meu8/mal/{malId}/{episode}/{audio}?server={server}
+```
+
+#### CLI / Player Examples:
+```bash
+# Play Episode 1 English Dub directly in VLC or mpv:
+vlc "https://your-domain.com/meu8/ani/16498/1/dub"
+
+# Stream Episode 1 Japanese Sub with Yuri server:
+mpv "https://your-domain.com/meu8/ani/16498/1/sub?server=yuri"
+
+# Inspect headers using cURL:
+curl -IL "https://your-domain.com/meu8/mal/16498/1/dub"
+```
+
+- **Manifest Response**: Returns a compliant `#EXTM3U` HLS manifest with header `Content-Type: application/vnd.apple.mpegurl`.
+- **Audio & Server Selection**: Supports `:audio` path parameter (`sub` or `dub`) and `?server=` query parameter (`flow`, `kitty`, `yuri`, `zuri`, `buzz`).
+- **Flexible Endpoints**: Also accessible via `/m3u8/ani/...`, `/m3u8/mal/...`, or query format `GET /api/play?anilistId=16498&episode=1&format=m3u8`.
+
+---
+
+### 3. REST API Endpoints
+
+#### `GET /api/play`
+Queries stream manifests, proxy URLs, and subtitle tracks:
+
+```http
+GET /api/play?anilistId=16498&episode=1&audio=sub&server=flow
+```
+
+Appending `&format=m3u8` instantly delivers the raw `.m3u8` playlist instead of JSON.
 
 #### `POST /api/play`
 Generates a streaming session ticket and extracts direct stream manifests with subtitles and skip times:
@@ -223,7 +265,32 @@ export function AnimePlayer({
 
 ---
 
-### 3. Bidirectional `postMessage` Integration
+### 3. Direct HTML5 `<video>` with HLS.js
+
+Stream raw `.m3u8` playlists directly without iframes using [Hls.js](https://github.com/video-dev/hls.js/) or native Safari/iOS HLS:
+
+```html
+<video id="video" controls autoplay playsinline style="width: 100%; max-width: 800px; border-radius: 12px;"></video>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+<script>
+  const video = document.getElementById('video');
+  const streamUrl = 'https://your-domain.com/meu8/ani/16498/1/sub';
+
+  if (Hls.isSupported()) {
+    const hls = new Hls();
+    hls.loadSource(streamUrl);
+    hls.attachMedia(video);
+  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    // Native Safari / iOS HLS engine
+    video.src = streamUrl;
+  }
+</script>
+```
+
+---
+
+### 4. Bidirectional `postMessage` Integration
 
 Communicate directly with the embedded player from the parent window.
 
@@ -272,12 +339,16 @@ aniflow-api/
 │   │   ├── anime/
 │   │   │   ├── flow-skip-times/ # Re:ANIME OP/ED skip extraction
 │   │   │   └── skip-times/      # AniSkip integration with duration adjustment
+│   │   ├── m3u8/                # Direct HLS stream aliases
 │   │   ├── play/                # Core stream resolver & ticket factory
 │   │   ├── progress/            # Playback tracking & telemetry endpoint
 │   │   └── proxy/               # Edge HLS proxy (m3u8, segment, subtitles, key)
 │   ├── embed/
 │   │   ├── ani/[anilistId]/     # AniList-based embed routes
 │   │   └── mal/[malId]/         # MyAnimeList-based embed routes
+│   ├── meu8/
+│   │   ├── ani/[anilistId]/     # AniList direct M3U8 streaming routes
+│   │   └── mal/[malId]/         # MyAnimeList direct M3U8 streaming routes
 │   ├── globals.css              # Global styles & theme definitions
 │   ├── layout.tsx               # Root layout & site metadata
 │   └── page.tsx                 # Documentation & interactive player hero
