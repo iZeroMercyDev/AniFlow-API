@@ -967,6 +967,18 @@ export async function GET(request: NextRequest) {
         url: streamResult.m3u8,
         m3u8: streamResult.m3u8,
         fullM3u8: streamResult.fullM3u8,
+        m3u8Endpoint: anilistId
+          ? `/api/m3u8/ani/${anilistId}/${episode}/${streamResult.audio || audio}`
+          : malId
+          ? `/api/m3u8/mal/${malId}/${episode}/${streamResult.audio || audio}`
+          : `/api/m3u8?q=${encodeURIComponent(title)}&ep=${episode}&audio=${streamResult.audio || audio}`,
+        fullM3u8Endpoint: `${baseUrl}${
+          anilistId
+            ? `/api/m3u8/ani/${anilistId}/${episode}/${streamResult.audio || audio}`
+            : malId
+            ? `/api/m3u8/mal/${malId}/${episode}/${streamResult.audio || audio}`
+            : `/api/m3u8?q=${encodeURIComponent(title)}&ep=${episode}&audio=${streamResult.audio || audio}`
+        }`,
         subtitles: streamResult.subtitles || [],
         intro: streamResult.intro || null,
         outro: streamResult.outro || null,

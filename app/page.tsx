@@ -1041,6 +1041,116 @@ export default function HomePage() {
                       </div>
                     </div>
                   </div>
+
+                  {/* Card 3: AniList Direct M3U8 Stream */}
+                  <div className="rounded-xl bg-[#0C0C0C] border border-emerald-500/20 shadow-xl flex flex-col justify-between overflow-hidden">
+                    <div className="flex flex-col flex-1">
+                      <div className="px-3 sm:px-3.5 py-2.5 bg-[#0C0C0C] border-b border-white/[0.06] flex items-center justify-between shrink-0 gap-2">
+                        <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 mr-2">
+                          <span className="text-xs font-bold text-white tracking-tight truncate">AniList M3U8 Stream</span>
+                          <span className="text-zinc-600 shrink-0">·</span>
+                          <span className="text-[11px] font-mono text-emerald-400 shrink-0 font-bold">/meu8/ani</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleCopy(
+                              `${currentOrigin}/meu8/ani/{anilistId}/{episode}/{audio}?server=flow`,
+                              "ep-m3u8-ani"
+                            )
+                          }
+                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-xs text-emerald-300 transition-all cursor-pointer shadow-sm active:scale-95"
+                        >
+                          {copiedType === "ep-m3u8-ani" ? (
+                            <Check className="w-3.5 h-3.5 text-emerald-400" />
+                          ) : (
+                            <Copy className="w-3.5 h-3.5" />
+                          )}
+                          <span>{copiedType === "ep-m3u8-ani" ? "Copied" : "Copy"}</span>
+                        </button>
+                      </div>
+
+                      <div className="p-3.5 bg-[#060606] border-b border-white/[0.06] font-mono text-xs text-emerald-400 overflow-x-auto leading-relaxed select-text custom-scrollbar">
+                        <code>{currentOrigin}/meu8/ani/&#123;anilistId&#125;/&#123;episode&#125;/&#123;audio&#125;?server=flow</code>
+                      </div>
+
+                      <div className="p-4 space-y-3.5 text-xs flex-1 flex flex-col justify-between">
+                        <p className="text-zinc-400 leading-relaxed">
+                          Direct HLS .m3u8 stream endpoint for HTML5 video tags, VLC, mpv, AVPlayer, or ExoPlayer using AniList anime ID.
+                        </p>
+
+                        <div className="space-y-1.5 font-mono text-xs pt-3 border-t border-white/[0.06]">
+                          <div className="flex items-center justify-between py-1 border-b border-white/[0.04]">
+                            <span className="font-semibold text-white">Format</span>
+                            <span className="text-emerald-400 font-sans">application/vnd.apple.mpegurl</span>
+                          </div>
+                          <div className="flex items-center justify-between py-1 border-b border-white/[0.04]">
+                            <span className="font-semibold text-white">audio</span>
+                            <span className="text-zinc-400 font-sans">sub · dub (default: sub)</span>
+                          </div>
+                          <div className="flex items-center justify-between py-1">
+                            <span className="font-semibold text-white">server</span>
+                            <span className="text-zinc-400 font-sans">flow · kitty · yuri · zuri · buzz</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Card 4: MAL Direct M3U8 Stream */}
+                  <div className="rounded-xl bg-[#0C0C0C] border border-emerald-500/20 shadow-xl flex flex-col justify-between overflow-hidden">
+                    <div className="flex flex-col flex-1">
+                      <div className="px-3 sm:px-3.5 py-2.5 bg-[#0C0C0C] border-b border-white/[0.06] flex items-center justify-between shrink-0 gap-2">
+                        <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 mr-2">
+                          <span className="text-xs font-bold text-white tracking-tight truncate">MAL M3U8 Stream</span>
+                          <span className="text-zinc-600 shrink-0">·</span>
+                          <span className="text-[11px] font-mono text-emerald-400 shrink-0 font-bold">/meu8/mal</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleCopy(
+                              `${currentOrigin}/meu8/mal/{malId}/{episode}/{audio}?server=flow`,
+                              "ep-m3u8-mal"
+                            )
+                          }
+                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-xs text-emerald-300 transition-all cursor-pointer shadow-sm active:scale-95"
+                        >
+                          {copiedType === "ep-m3u8-mal" ? (
+                            <Check className="w-3.5 h-3.5 text-emerald-400" />
+                          ) : (
+                            <Copy className="w-3.5 h-3.5" />
+                          )}
+                          <span>{copiedType === "ep-m3u8-mal" ? "Copied" : "Copy"}</span>
+                        </button>
+                      </div>
+
+                      <div className="p-3.5 bg-[#060606] border-b border-white/[0.06] font-mono text-xs text-emerald-400 overflow-x-auto leading-relaxed select-text custom-scrollbar">
+                        <code>{currentOrigin}/meu8/mal/&#123;malId&#125;/&#123;episode&#125;/&#123;audio&#125;?server=flow</code>
+                      </div>
+
+                      <div className="p-4 space-y-3.5 text-xs flex-1 flex flex-col justify-between">
+                        <p className="text-zinc-400 leading-relaxed">
+                          Direct HLS .m3u8 stream endpoint using MyAnimeList ID with automatic mapping, multi-server routing, and subtitle proxying.
+                        </p>
+
+                        <div className="space-y-1.5 font-mono text-xs pt-3 border-t border-white/[0.06]">
+                          <div className="flex items-center justify-between py-1 border-b border-white/[0.04]">
+                            <span className="font-semibold text-white">Format</span>
+                            <span className="text-emerald-400 font-sans">application/vnd.apple.mpegurl</span>
+                          </div>
+                          <div className="flex items-center justify-between py-1 border-b border-white/[0.04]">
+                            <span className="font-semibold text-white">audio</span>
+                            <span className="text-zinc-400 font-sans">sub · dub (default: sub)</span>
+                          </div>
+                          <div className="flex items-center justify-between py-1">
+                            <span className="font-semibold text-white">server</span>
+                            <span className="text-zinc-400 font-sans">flow · kitty · yuri · zuri · buzz</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </motion.div>
             )}
@@ -1256,6 +1366,20 @@ export default function HomePage() {
                         </td>
                         <td className="py-2.5 text-zinc-300 font-sans leading-relaxed">
                           Automatically skip the ending credits when timestamps exist.
+                        </td>
+                      </tr>
+                      <tr className="hover:bg-white/[0.015] transition-colors">
+                        <td className="py-2.5 pr-4 sm:pr-6 font-mono font-bold text-emerald-400 whitespace-nowrap">
+                          format
+                        </td>
+                        <td className="py-2.5 pr-4 sm:pr-6 font-mono text-zinc-400 whitespace-nowrap">
+                          m3u8 · json · sources
+                        </td>
+                        <td className="py-2.5 pr-4 sm:pr-6 font-mono text-zinc-400 whitespace-nowrap">
+                          json
+                        </td>
+                        <td className="py-2.5 text-zinc-300 font-sans leading-relaxed">
+                          Output format. Setting <code className="text-emerald-400 font-mono">format=m3u8</code> directly streams the HLS playlist. Also accessible via clean routes: <code className="text-emerald-400 font-mono">/meu8/ani/:id/:ep/:audio</code> and <code className="text-emerald-400 font-mono">/meu8/mal/:id/:ep/:audio</code>.
                         </td>
                       </tr>
                     </tbody>
